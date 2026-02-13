@@ -4,14 +4,18 @@ import threading
 import cv2
 import flet as ft
 
-from src.processing.video_processor import VideoProcessor, apply_rotation, detect_video_rotation
+from src.processing.video_processor import (
+    VideoProcessor,
+    apply_rotation,
+    detect_video_rotation,
+)
 from src.ui.crop_gallery import CropGallery
 from src.ui.roi_canvas import ROICanvas
 from src.utils.image_utils import (
     detect_hdr_transfer,
     frame_to_base64,
     resize_frame_for_display,
-    tone_map_pq_frame,
+    tone_map_hdr_frame,
 )
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -19,8 +23,9 @@ DET_MODEL_PATH = os.path.join(BASE_DIR, "src", "weights", "pepper_det.onnx")
 CLS_MODEL_PATH = os.path.join(BASE_DIR, "src", "weights", "pepper_ripeness_cls_v1.onnx")
 TRACKER_CONFIG = os.path.join(BASE_DIR, "botsort.yaml")
 DEFAULT_CONFIDENCE = 0.40
-DISPLAY_MAX_W = 800
-DISPLAY_MAX_H = 600
+# Fallback display limits (adjusted dynamically based on page width)
+DISPLAY_MAX_W_FALLBACK = 800
+DISPLAY_MAX_H_FALLBACK = 600
 
 
 def main(page: ft.Page):
@@ -50,6 +55,7 @@ def main(page: ft.Page):
     # --- GPU Switch ---
     try:
         import onnxruntime as ort
+
         cuda_available = "CUDAExecutionProvider" in ort.get_available_providers()
     except ImportError:
         cuda_available = False
@@ -213,11 +219,16 @@ def main(page: ft.Page):
         # Detectar HDR y tone-map para display correcto
         hdr_transfer = detect_hdr_transfer(video_path)
         state["hdr_transfer"] = hdr_transfer
-        if hdr_transfer == "pq":
-            frame = tone_map_pq_frame(frame)
+        if hdr_transfer:
+            frame = tone_map_hdr_frame(frame, hdr_transfer)
 
         state["first_frame"] = frame
-        resized, sx, sy = resize_frame_for_display(frame, DISPLAY_MAX_W, DISPLAY_MAX_H)
+        # Calcular tamaño de display basado en el ancho disponible de la ventana
+        # page.width - padding(40) - card_padding(40) - margen(20)
+        available_w = int((page.width or 960) - 100)
+        display_max_w = max(400, min(available_w, DISPLAY_MAX_W_FALLBACK))
+        display_max_h = DISPLAY_MAX_H_FALLBACK
+        resized, sx, sy = resize_frame_for_display(frame, display_max_w, display_max_h)
         state["scale_x"] = sx
         state["scale_y"] = sy
         state["display_w"] = resized.shape[1]
@@ -256,7 +267,9 @@ def main(page: ft.Page):
             show_snackbar(f"No se encuentra el modelo: {DET_MODEL_PATH}", error=True)
             return
         if not os.path.exists(CLS_MODEL_PATH):
-            show_snackbar(f"No se encuentra el clasificador: {CLS_MODEL_PATH}", error=True)
+            show_snackbar(
+                f"No se encuentra el clasificador: {CLS_MODEL_PATH}", error=True
+            )
             return
 
         state["processing"] = True
@@ -266,9 +279,7 @@ def main(page: ft.Page):
         counts_text.value = ""
         page.update()
 
-        threading.Thread(
-            target=run_processing, args=(roi_points,), daemon=True
-        ).start()
+        threading.Thread(target=run_processing, args=(roi_points,), daemon=True).start()
 
     def run_processing(roi_points: list[tuple[int, int]]):
         try:
@@ -351,6 +362,8 @@ def main(page: ft.Page):
                         spacing=10,
                         run_spacing=10,
                     ),
+                    # Desglose por madurez y direccion
+                    _ripeness_breakdown(results),
                     ft.Text(
                         f"Frames procesados: {results['frames_processed']}/{results['total_frames']}",
                         size=12,
@@ -451,6 +464,92 @@ def _count_chip(label: str, value: str, color: str) -> ft.Container:
         border_radius=12,
         bgcolor=ft.Colors.WHITE,
         alignment=ft.Alignment.CENTER,
+    )
+
+
+_RIPENESS_UI_COLORS = {
+    "green": ft.Colors.GREEN_600,
+    "red": ft.Colors.RED_600,
+    "turning": ft.Colors.ORANGE_600,
+    "brown": ft.Colors.BROWN_400,
+}
+
+
+def _ripeness_breakdown(results: dict) -> ft.Container:
+    """Tabla visual con desglose de madurez por IN/OUT. Usa ResponsiveRow para adaptarse."""
+    in_rip = results.get("in_ripeness", {})
+    out_rip = results.get("out_ripeness", {})
+    total_rip = results.get("ripeness_counts", {})
+
+    def _num_cell(value: str, bold: bool = False) -> ft.Container:
+        return ft.Container(
+            ft.Text(
+                value,
+                size=11,
+                weight=ft.FontWeight.BOLD if bold else None,
+                text_align=ft.TextAlign.CENTER,
+            ),
+            alignment=ft.Alignment.CENTER,
+            col={"xs": 2, "sm": 2},
+        )
+
+    header = ft.ResponsiveRow(
+        [
+            ft.Container(
+                ft.Text("Madurez", size=11, weight=ft.FontWeight.BOLD),
+                col={"xs": 6, "sm": 6},
+            ),
+            ft.Container(
+                ft.Text("IN", size=11, weight=ft.FontWeight.BOLD, color=ft.Colors.BLUE_700, text_align=ft.TextAlign.CENTER),
+                alignment=ft.Alignment.CENTER,
+                col={"xs": 2, "sm": 2},
+            ),
+            ft.Container(
+                ft.Text("OUT", size=11, weight=ft.FontWeight.BOLD, color=ft.Colors.ORANGE_700, text_align=ft.TextAlign.CENTER),
+                alignment=ft.Alignment.CENTER,
+                col={"xs": 2, "sm": 2},
+            ),
+            ft.Container(
+                ft.Text("Total", size=11, weight=ft.FontWeight.BOLD, text_align=ft.TextAlign.CENTER),
+                alignment=ft.Alignment.CENTER,
+                col={"xs": 2, "sm": 2},
+            ),
+        ],
+        spacing=4,
+        run_spacing=0,
+    )
+
+    rows = [header, ft.Divider(height=1)]
+    for cls in ("green", "red", "turning", "brown"):
+        color = _RIPENESS_UI_COLORS.get(cls, ft.Colors.GREY_600)
+        row = ft.ResponsiveRow(
+            [
+                ft.Container(
+                    content=ft.Row(
+                        [
+                            ft.Container(width=10, height=10, bgcolor=color, border_radius=5),
+                            ft.Text(cls.capitalize(), size=11),
+                        ],
+                        spacing=6,
+                    ),
+                    col={"xs": 6, "sm": 6},
+                ),
+                _num_cell(str(in_rip.get(cls, 0))),
+                _num_cell(str(out_rip.get(cls, 0))),
+                _num_cell(str(total_rip.get(cls, 0)), bold=True),
+            ],
+            spacing=4,
+            run_spacing=0,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        )
+        rows.append(row)
+
+    return ft.Container(
+        content=ft.Column(rows, spacing=4),
+        padding=10,
+        border=ft.Border.all(1, ft.Colors.GREY_300),
+        border_radius=8,
+        bgcolor=ft.Colors.WHITE,
     )
 
 

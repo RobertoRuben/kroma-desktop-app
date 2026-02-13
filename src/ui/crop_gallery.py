@@ -3,7 +3,6 @@ import numpy as np
 
 from src.utils.image_utils import frame_to_base64
 
-
 _RIPENESS_FLET_COLORS = {
     "brown": (ft.Colors.BROWN_400, ft.Colors.WHITE),
     "green": (ft.Colors.GREEN_600, ft.Colors.WHITE),
@@ -14,8 +13,14 @@ _RIPENESS_FLET_COLORS = {
 _ALL_CLASSES = ["green", "red", "turning", "brown"]
 
 
+_DIRECTION_FLET_COLORS = {
+    "in": (ft.Colors.BLUE_700, ft.Colors.WHITE),
+    "out": (ft.Colors.ORANGE_700, ft.Colors.WHITE),
+}
+
+
 class CropGallery(ft.Column):
-    """Galeria GridView de crops con filtro por madurez y eliminacion."""
+    """Galeria GridView de crops con filtro por madurez, direccion y eliminacion."""
 
     def __init__(
         self,
@@ -28,21 +33,23 @@ class CropGallery(ft.Column):
         self.crop_metadata = list(crop_metadata or [])
         self.on_crops_changed = on_crops_changed
         self._active_filter: str | None = None
+        self._direction_filter: str | None = None  # "in", "out" o None (todos)
 
         # Pre-encode todas las imagenes
-        self._crop_b64: list[str] = [
-            frame_to_base64(c, quality=95) for c in self.crops
-        ]
+        self._crop_b64: list[str] = [frame_to_base64(c, quality=95) for c in self.crops]
 
-        # --- Filter chips ---
+        # --- Direction filter chips ---
+        self._direction_chips = ft.Row(spacing=8, wrap=True)
+
+        # --- Ripeness filter chips ---
         self._filter_chips = ft.Row(spacing=8, wrap=True)
 
         # --- Header con conteo ---
         self._header_text = ft.Text(size=16, weight=ft.FontWeight.BOLD)
 
-        # --- Grid ---
+        # --- Grid: max_extent para auto-calcular columnas segun ancho ---
         self._grid = ft.GridView(
-            runs_count=5,
+            max_extent=150,
             child_aspect_ratio=0.65,
             spacing=10,
             run_spacing=10,
@@ -51,10 +58,12 @@ class CropGallery(ft.Column):
 
         self.controls = [
             self._header_text,
-            self._filter_chips,
+            ft.Row([self._direction_chips], scroll=ft.ScrollMode.AUTO),
+            ft.Row([self._filter_chips], scroll=ft.ScrollMode.AUTO),
             ft.Container(
                 content=self._grid,
-                height=400,
+                expand=True,
+                height=420,
                 border=ft.Border.all(1, ft.Colors.GREY_300),
                 border_radius=8,
                 padding=10,
@@ -64,15 +73,47 @@ class CropGallery(ft.Column):
         self._rebuild()
 
     def _rebuild(self):
-        """Reconstruye chips y grid segun filtro activo."""
-        # Contar por clase
+        """Reconstruye chips y grid segun filtros activos."""
+        # Contar por clase y direccion
         class_counts = {c: 0 for c in _ALL_CLASSES}
+        dir_counts = {"in": 0, "out": 0}
         for meta in self.crop_metadata:
             r = meta.get("ripeness", "")
+            d = meta.get("direction", "")
             if r in class_counts:
                 class_counts[r] += 1
+            if d in dir_counts:
+                dir_counts[d] += 1
 
-        # Filter chips
+        # Direction chips
+        dir_chips = []
+        all_dir_selected = self._direction_filter is None
+        dir_chips.append(
+            ft.Chip(
+                label=ft.Text(f"Ambos ({len(self.crops)})"),
+                selected=all_dir_selected,
+                on_select=lambda e: self._set_direction_filter(None),
+            )
+        )
+        for d_name, d_label in [("in", "IN"), ("out", "OUT")]:
+            count = dir_counts[d_name]
+            bg, _ = _DIRECTION_FLET_COLORS.get(
+                d_name, (ft.Colors.GREY_400, ft.Colors.WHITE)
+            )
+            selected = self._direction_filter == d_name
+            dir_chips.append(
+                ft.Chip(
+                    label=ft.Text(f"{d_label} ({count})"),
+                    selected=selected,
+                    selected_color=bg,
+                    on_select=lambda e, c=d_name: self._set_direction_filter(c),
+                )
+            )
+        self._direction_chips.controls = [
+            ft.Text("Direccion:", size=12, weight=ft.FontWeight.BOLD)
+        ] + dir_chips
+
+        # Ripeness filter chips
         chips = []
         all_selected = self._active_filter is None
         chips.append(
@@ -84,7 +125,9 @@ class CropGallery(ft.Column):
         )
         for cls_name in _ALL_CLASSES:
             count = class_counts[cls_name]
-            bg, _ = _RIPENESS_FLET_COLORS.get(cls_name, (ft.Colors.GREY_400, ft.Colors.WHITE))
+            bg, _ = _RIPENESS_FLET_COLORS.get(
+                cls_name, (ft.Colors.GREY_400, ft.Colors.WHITE)
+            )
             selected = self._active_filter == cls_name
             chips.append(
                 ft.Chip(
@@ -94,20 +137,34 @@ class CropGallery(ft.Column):
                     on_select=lambda e, c=cls_name: self._set_filter(c),
                 )
             )
-        self._filter_chips.controls = chips
+        self._filter_chips.controls = [
+            ft.Text("Madurez:", size=12, weight=ft.FontWeight.BOLD)
+        ] + chips
 
-        # Filtrar items
+        # Filtrar items (por direccion Y madurez)
         visible_indices = []
         for i in range(len(self.crops)):
             meta = self.crop_metadata[i] if i < len(self.crop_metadata) else {}
             ripeness = meta.get("ripeness", "")
-            if self._active_filter is None or ripeness == self._active_filter:
-                visible_indices.append(i)
+            direction = meta.get("direction", "")
+            if (
+                self._direction_filter is not None
+                and direction != self._direction_filter
+            ):
+                continue
+            if self._active_filter is not None and ripeness != self._active_filter:
+                continue
+            visible_indices.append(i)
 
         # Header
+        filter_parts = []
+        if self._direction_filter:
+            filter_parts.append(self._direction_filter.upper())
         if self._active_filter:
+            filter_parts.append(self._active_filter.capitalize())
+        if filter_parts:
             self._header_text.value = (
-                f"Crops Extraidos — {self._active_filter.capitalize()} "
+                f"Crops Extraidos — {' / '.join(filter_parts)} "
                 f"({len(visible_indices)}/{len(self.crops)})"
             )
         else:
@@ -123,22 +180,48 @@ class CropGallery(ft.Column):
         meta = self.crop_metadata[idx] if idx < len(self.crop_metadata) else {}
         ripeness = meta.get("ripeness", "")
         ripeness_conf = meta.get("ripeness_conf", 0)
+        direction = meta.get("direction", "")
 
         bg_color, text_color = _RIPENESS_FLET_COLORS.get(
             ripeness, (ft.Colors.GREY_400, ft.Colors.WHITE)
         )
-        ripeness_badge = ft.Container(
-            content=ft.Text(
-                f"{ripeness.capitalize()} {ripeness_conf:.0%}" if ripeness else "",
-                size=10,
-                weight=ft.FontWeight.BOLD,
-                color=text_color,
-                text_align=ft.TextAlign.CENTER,
-            ),
-            bgcolor=bg_color,
-            border_radius=10,
-            padding=ft.Padding.symmetric(horizontal=8, vertical=2),
-        ) if ripeness else ft.Container()
+        ripeness_badge = (
+            ft.Container(
+                content=ft.Text(
+                    f"{ripeness.capitalize()} {ripeness_conf:.0%}" if ripeness else "",
+                    size=10,
+                    weight=ft.FontWeight.BOLD,
+                    color=text_color,
+                    text_align=ft.TextAlign.CENTER,
+                ),
+                bgcolor=bg_color,
+                border_radius=10,
+                padding=ft.Padding.symmetric(horizontal=8, vertical=2),
+            )
+            if ripeness
+            else ft.Container()
+        )
+
+        # Badge de direccion
+        dir_bg, dir_tc = _DIRECTION_FLET_COLORS.get(
+            direction, (ft.Colors.GREY_400, ft.Colors.WHITE)
+        )
+        direction_badge = (
+            ft.Container(
+                content=ft.Text(
+                    direction.upper() if direction else "",
+                    size=9,
+                    weight=ft.FontWeight.BOLD,
+                    color=dir_tc,
+                    text_align=ft.TextAlign.CENTER,
+                ),
+                bgcolor=dir_bg,
+                border_radius=10,
+                padding=ft.Padding.symmetric(horizontal=6, vertical=1),
+            )
+            if direction and direction != "unknown"
+            else ft.Container()
+        )
 
         delete_btn = ft.IconButton(
             icon=ft.Icons.CLOSE,
@@ -156,38 +239,49 @@ class CropGallery(ft.Column):
                         [
                             ft.Image(
                                 src=self._crop_b64[idx],
-                                width=112,
-                                height=112,
                                 fit=ft.BoxFit.CONTAIN,
                                 border_radius=ft.BorderRadius.all(4),
+                                expand=True,
                             ),
                             ft.Container(
                                 content=delete_btn,
                                 alignment=ft.Alignment.TOP_RIGHT,
                             ),
                         ],
-                        width=112,
-                        height=112,
+                        expand=True,
                     ),
-                    ft.Text(
-                        f"#{idx + 1}",
-                        size=11,
-                        weight=ft.FontWeight.BOLD,
-                        text_align=ft.TextAlign.CENTER,
+                    ft.Row(
+                        [
+                            ft.Text(
+                                f"#{idx + 1}",
+                                size=11,
+                                weight=ft.FontWeight.BOLD,
+                            ),
+                            direction_badge,
+                        ],
+                        alignment=ft.MainAxisAlignment.CENTER,
+                        spacing=4,
                     ),
                     ripeness_badge,
                 ],
                 horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                 spacing=2,
+                expand=True,
             ),
             border=ft.Border.all(1, ft.Colors.GREY_400),
             border_radius=8,
             padding=6,
             bgcolor=ft.Colors.GREY_100,
+            expand=True,
         )
 
     def _set_filter(self, cls_name: str | None):
         self._active_filter = cls_name
+        self._rebuild()
+        self.update()
+
+    def _set_direction_filter(self, direction: str | None):
+        self._direction_filter = direction
         self._rebuild()
         self.update()
 

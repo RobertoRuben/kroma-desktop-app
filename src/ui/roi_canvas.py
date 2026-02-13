@@ -98,31 +98,41 @@ class ROICanvas(ft.Column):
             mouse_cursor=ft.MouseCursor.PRECISE,
         )
 
+        # Envolver en ScrollableControl para ventanas pequeñas
+        self._image_container = ft.Container(
+            content=ft.Stack(
+                [
+                    ft.Image(
+                        src=self.image_base64,
+                        width=self.display_width,
+                        height=self.display_height,
+                        fit=ft.BoxFit.FILL,
+                    ),
+                    gesture,
+                ]
+            ),
+            border=ft.Border.all(2, ft.Colors.BLUE_400),
+            border_radius=8,
+            clip_behavior=ft.ClipBehavior.HARD_EDGE,
+            width=self.display_width,
+            height=self.display_height,
+        )
+
         self.controls = [
-            self.mode_radio,
+            ft.Row(
+                [self.mode_radio],
+                wrap=True,
+                scroll=ft.ScrollMode.AUTO,
+            ),
             ft.Text(
                 "Click sobre la imagen para definir la zona de interes.",
                 size=13,
                 italic=True,
                 color=ft.Colors.GREY_600,
             ),
-            ft.Container(
-                content=ft.Stack(
-                    [
-                        ft.Image(
-                            src=self.image_base64,
-                            width=self.display_width,
-                            height=self.display_height,
-                            fit=ft.BoxFit.FILL,
-                        ),
-                        gesture,
-                    ]
-                ),
-                border=ft.Border.all(2, ft.Colors.BLUE_400),
-                border_radius=8,
-                clip_behavior=ft.ClipBehavior.HARD_EDGE,
-                width=self.display_width,
-                height=self.display_height,
+            ft.Row(
+                [self._image_container],
+                scroll=ft.ScrollMode.AUTO,
             ),
             self.points_text,
             ft.Row(

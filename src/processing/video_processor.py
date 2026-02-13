@@ -1,4 +1,6 @@
 import os
+import queue
+import threading
 from pathlib import Path
 from typing import Any, Callable
 
@@ -7,10 +9,9 @@ import numpy as np
 import onnxruntime as ort
 import yaml
 from shapely.geometry import LineString, Point
-from ultralytics import YOLO
 from ultralytics.trackers.bot_sort import BOTSORT
 
-from src.utils.image_utils import resize_with_padding, tone_map_pq_frame
+from src.utils.image_utils import resize_with_padding, tone_map_hdr_frame
 
 # Colores BGR por clase de madurez (para anotación en video)
 _RIPENESS_COLORS = {
@@ -55,7 +56,9 @@ class _Detections:
         return len(self._dets)
 
     def __getitem__(self, idx):
-        return _Detections(self._dets[idx] if self._dets.ndim > 1 else self._dets[idx].reshape(-1, 6))
+        return _Detections(
+            self._dets[idx] if self._dets.ndim > 1 else self._dets[idx].reshape(-1, 6)
+        )
 
     @property
     def conf(self):
@@ -82,7 +85,7 @@ class _Detections:
 
 
 class OnnxDetector:
-    """Detector ONNX end2end (YOLO26) con denormalizacion correcta."""
+    """Detector ONNX end2end (YOLO26) con denormalizacion correcta y buffers pre-alocados."""
 
     def __init__(self, model_path: str, use_gpu: bool, confidence: float = 0.40):
         providers = (
@@ -100,32 +103,57 @@ class OnnxDetector:
         self.input_size = (inp_shape[2], inp_shape[3])  # (H, W) = (640, 640)
         self.confidence = confidence
 
+        # Pre-alocar buffers reutilizables
+        inp_h, inp_w = self.input_size
+        self._canvas = np.full((inp_h, inp_w, 3), 114, dtype=np.uint8)
+        self._blob = np.zeros((1, 3, inp_h, inp_w), dtype=np.float32)
+        # Cache de dimensiones (constante dentro del mismo video)
+        self._cached_dims: tuple[int, int] | None = None
+        self._scale = 0.0
+        self._new_w = 0
+        self._new_h = 0
+        self._pad_x = 0
+        self._pad_y = 0
+
     def detect(self, frame: np.ndarray) -> np.ndarray:
         """Detecta objetos. Retorna array (N, 6) con [x1, y1, x2, y2, conf, cls] en coords del frame."""
         h_orig, w_orig = frame.shape[:2]
         inp_h, inp_w = self.input_size
 
-        # Preprocess: letterbox resize a inp_size
-        scale = min(inp_w / w_orig, inp_h / h_orig)
-        new_w, new_h = int(w_orig * scale), int(h_orig * scale)
-        pad_x = (inp_w - new_w) // 2
-        pad_y = (inp_h - new_h) // 2
+        # Calcular scale/padding solo si cambian las dimensiones
+        dims = (h_orig, w_orig)
+        if dims != self._cached_dims:
+            self._cached_dims = dims
+            self._scale = min(inp_w / w_orig, inp_h / h_orig)
+            self._new_w = int(w_orig * self._scale)
+            self._new_h = int(h_orig * self._scale)
+            self._pad_x = (inp_w - self._new_w) // 2
+            self._pad_y = (inp_h - self._new_h) // 2
+            # El padding del canvas ya es 114 desde __init__, no hay que resetearlo
 
+        scale = self._scale
+        new_w, new_h = self._new_w, self._new_h
+        pad_x, pad_y = self._pad_x, self._pad_y
+
+        # Resize directo a la region del canvas
         resized = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
-        canvas = np.full((inp_h, inp_w, 3), 114, dtype=np.uint8)
-        canvas[pad_y : pad_y + new_h, pad_x : pad_x + new_w] = resized
+        self._canvas[pad_y : pad_y + new_h, pad_x : pad_x + new_w] = resized
 
-        # BGR -> RGB, HWC -> CHW, normalize
-        blob = canvas[:, :, ::-1].transpose(2, 0, 1).astype(np.float32) / 255.0
-        blob = np.expand_dims(blob, 0)
+        # BGR -> RGB, HWC -> CHW, normalize — in-place en blob pre-alocado
+        np.divide(
+            self._canvas[:, :, ::-1].transpose(2, 0, 1),
+            255.0,
+            out=self._blob[0],
+            casting="unsafe",
+        )
 
         # Inferencia
-        output = self.session.run(None, {self.input_name: blob})[0]  # (1, 300, 6)
+        output = self.session.run(None, {self.input_name: self._blob})[0]  # (1, 300, 6)
         preds = output[0]  # (300, 6): [x1, y1, x2, y2, conf, cls] normalized
 
         # Filtrar por confianza
         mask = preds[:, 4] > self.confidence
-        dets = preds[mask]
+        dets = preds[mask].copy()
 
         if len(dets) == 0:
             return np.empty((0, 6), dtype=np.float32)
@@ -147,6 +175,65 @@ class OnnxDetector:
         return dets[valid].astype(np.float32)
 
 
+class OnnxClassifier:
+    """Clasificador ONNX directo para madurez, sin overhead de Ultralytics."""
+
+    CLASS_NAMES = {0: "brown", 1: "green", 2: "red", 3: "turning"}
+
+    def __init__(self, model_path: str, use_gpu: bool):
+        providers = (
+            ["CUDAExecutionProvider", "CPUExecutionProvider"]
+            if use_gpu
+            else ["CPUExecutionProvider"]
+        )
+        sess_opts = ort.SessionOptions()
+        sess_opts.log_severity_level = 3
+        self.session = ort.InferenceSession(
+            model_path, sess_options=sess_opts, providers=providers
+        )
+        self.input_name = self.session.get_inputs()[0].name
+        inp_shape = self.session.get_inputs()[0].shape  # [1, 3, 224, 224]
+        self.input_size = (inp_shape[2], inp_shape[3])
+        # Buffer pre-alocado para inferencia single
+        self._blob = np.zeros(
+            (1, 3, self.input_size[0], self.input_size[1]), dtype=np.float32
+        )
+
+    def classify(self, crop: np.ndarray) -> tuple[str, float]:
+        """Clasifica un crop. Retorna (label, confidence).
+
+        Replica el preprocessing de YOLO classify: Resize(shortest=224) + CenterCrop(224).
+        """
+        target = self.input_size[0]  # 224
+        ch, cw = crop.shape[:2]
+
+        # Resize: escalar el lado corto a 224, mantener aspect ratio
+        if ch < cw:
+            new_h = target
+            new_w = int(cw * target / ch)
+        else:
+            new_w = target
+            new_h = int(ch * target / cw)
+        resized = cv2.resize(crop, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+
+        # CenterCrop a 224x224
+        y_off = (new_h - target) // 2
+        x_off = (new_w - target) // 2
+        cropped = resized[y_off : y_off + target, x_off : x_off + target]
+
+        # BGR -> RGB, HWC -> CHW, /255
+        np.divide(
+            cropped[:, :, ::-1].transpose(2, 0, 1),
+            255.0,
+            out=self._blob[0],
+            casting="unsafe",
+        )
+        output = self.session.run(None, {self.input_name: self._blob})[0]
+        probs = output[0]
+        top_idx = int(np.argmax(probs))
+        return self.CLASS_NAMES[top_idx], float(probs[top_idx])
+
+
 class RegionCounter:
     """Contador de objetos que cruzan una region (linea o poligono)."""
 
@@ -155,17 +242,49 @@ class RegionCounter:
         self.in_count = 0
         self.out_count = 0
         self.counted_ids: set[int] = set()
+        self._crossing_direction: dict[int, str] = {}  # track_id -> "in" | "out"
         self._prev_centroids: dict[int, tuple[float, float]] = {}
 
-        # Para linea (2 pts): usar LineString para deteccion de cruce
+        # Para linea (2 pts): usar math nativo (sin Shapely overhead)
         if len(region) == 2:
-            self._line = LineString(region)
             self._is_line = True
+            self._line_p1 = region[0]
+            self._line_p2 = region[1]
+            # Auto-detectar orientacion: si la linea es mas vertical, usar eje X
+            dx = abs(region[1][0] - region[0][0])
+            dy = abs(region[1][1] - region[0][1])
+            self._line_is_vertical = dy > dx
+            self._line = None
+            self._convex_hull = None
         else:
             # Poligono: crear LineString del perimetro cerrado
             pts = list(region) + [region[0]]
             self._line = LineString(pts)
             self._is_line = False
+            self._line_is_vertical = False
+            self._convex_hull = self._line.convex_hull  # Pre-computar
+
+    def get_direction(self, track_id: int) -> str | None:
+        """Retorna la direccion de cruce de un track: 'in', 'out' o None."""
+        return self._crossing_direction.get(track_id)
+
+    @staticmethod
+    def _segments_intersect(
+        p1: tuple, p2: tuple, p3: tuple, p4: tuple
+    ) -> bool:
+        """Test si segmento (p1->p2) intersecta segmento (p3->p4) con cross-product."""
+        def cross(o, a, b):
+            return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+
+        d1 = cross(p3, p4, p1)
+        d2 = cross(p3, p4, p2)
+        d3 = cross(p1, p2, p3)
+        d4 = cross(p1, p2, p4)
+
+        if ((d1 > 0 and d2 < 0) or (d1 < 0 and d2 > 0)) and \
+           ((d3 > 0 and d4 < 0) or (d3 < 0 and d4 > 0)):
+            return True
+        return False
 
     def update(self, track_ids: list[int], boxes: np.ndarray) -> set[int]:
         """Actualiza conteo. Retorna set de IDs que acaban de cruzar."""
@@ -178,26 +297,44 @@ class RegionCounter:
 
             if tid in self._prev_centroids:
                 px, py = self._prev_centroids[tid]
-                movement = LineString([(px, py), (cx, cy)])
-                if self._line.intersects(movement):
+
+                # Test de cruce: math nativo para lineas, Shapely para poligonos
+                if self._is_line:
+                    crossed = self._segments_intersect(
+                        (px, py), (cx, cy), self._line_p1, self._line_p2
+                    )
+                else:
+                    movement = LineString([(px, py), (cx, cy)])
+                    crossed = self._line.intersects(movement)
+
+                if crossed:
                     self.counted_ids.add(tid)
                     new_crossings.add(tid)
                     # Determinar direccion IN/OUT
                     if self._is_line:
-                        # Para linea horizontal: arriba->abajo = IN, abajo->arriba = OUT
-                        if cy > py:
-                            self.in_count += 1
+                        if self._line_is_vertical:
+                            if cx > px:
+                                self.in_count += 1
+                                self._crossing_direction[tid] = "in"
+                            else:
+                                self.out_count += 1
+                                self._crossing_direction[tid] = "out"
                         else:
-                            self.out_count += 1
+                            if cy > py:
+                                self.in_count += 1
+                                self._crossing_direction[tid] = "in"
+                            else:
+                                self.out_count += 1
+                                self._crossing_direction[tid] = "out"
                     else:
-                        # Para poligono: entrando = IN, saliendo = OUT
-                        prev_inside = Point(px, py).within(
-                            LineString(list(self.region) + [self.region[0]]).convex_hull
-                        )
+                        # Poligono: usar convex hull pre-computado
+                        prev_inside = Point(px, py).within(self._convex_hull)
                         if not prev_inside:
                             self.in_count += 1
+                            self._crossing_direction[tid] = "in"
                         else:
                             self.out_count += 1
+                            self._crossing_direction[tid] = "out"
 
             self._prev_centroids[tid] = (cx, cy)
 
@@ -225,8 +362,8 @@ class VideoProcessor:
         # Detector ONNX con denormalizacion correcta
         self.detector = OnnxDetector(model_path, use_gpu, confidence)
 
-        # Clasificador de madurez
-        self.cls_model = YOLO(cls_model_path, task="classify")
+        # Clasificador ONNX directo (sin overhead de Ultralytics)
+        self.classifier = OnnxClassifier(cls_model_path, use_gpu)
 
         # Tracker BoT-SORT
         with open(tracker_config, "r") as f:
@@ -241,17 +378,37 @@ class VideoProcessor:
         self.crop_metadata: list[dict[str, Any]] = []
         self._track_ripeness: dict[int, tuple[str, float]] = {}
         self._ripeness_counts: dict[str, int] = {
-            "green": 0, "red": 0, "brown": 0, "turning": 0,
+            "green": 0,
+            "red": 0,
+            "brown": 0,
+            "turning": 0,
+        }
+        # Conteos de madurez desglosados por direccion IN/OUT
+        self._in_ripeness: dict[str, int] = {
+            "green": 0,
+            "red": 0,
+            "brown": 0,
+            "turning": 0,
+        }
+        self._out_ripeness: dict[str, int] = {
+            "green": 0,
+            "red": 0,
+            "brown": 0,
+            "turning": 0,
         }
 
         # Overlay ROI
         self._roi_overlay: np.ndarray | None = None
         self._roi_mask: np.ndarray | None = None
 
+        # Cache de leyenda (solo se re-renderiza cuando cambian los conteos)
+        self._legend_cache: tuple[np.ndarray, int, int, int, int] | None = None
+        self._legend_counts_hash: tuple | None = None
+
     def process(
         self, progress_callback: Callable[[int, int, int, int], None] | None = None
     ) -> dict[str, Any]:
-        """Procesa el video completo."""
+        """Procesa el video completo con I/O threading para mayor velocidad."""
         cap = cv2.VideoCapture(self.video_path)
         if not cap.isOpened():
             raise RuntimeError(f"No se pudo abrir el video: {self.video_path}")
@@ -275,19 +432,48 @@ class VideoProcessor:
         if not writer.isOpened():
             raise RuntimeError(f"No se pudo crear video de salida: {output_path}")
 
+        # --- Producer-Consumer I/O threading ---
+        read_q: queue.Queue[np.ndarray | None] = queue.Queue(maxsize=8)
+        write_q: queue.Queue[np.ndarray | None] = queue.Queue(maxsize=8)
+        reader_error: list[Exception] = []
+
+        def reader_thread():
+            try:
+                while True:
+                    ret, frame = cap.read()
+                    if not ret:
+                        read_q.put(None)
+                        return
+                    read_q.put(frame)
+            except Exception as ex:
+                reader_error.append(ex)
+                read_q.put(None)
+
+        def writer_thread():
+            while True:
+                frame = write_q.get()
+                if frame is None:
+                    return
+                writer.write(frame)
+
+        t_reader = threading.Thread(target=reader_thread, daemon=True)
+        t_writer = threading.Thread(target=writer_thread, daemon=True)
+        t_reader.start()
+        t_writer.start()
+
         frame_num = 0
 
         try:
-            while cap.isOpened():
-                ret, frame = cap.read()
-                if not ret:
+            while True:
+                frame = read_q.get()
+                if frame is None:
                     break
 
                 frame_num += 1
                 frame = apply_rotation(frame, rotation)
 
-                if self.hdr_transfer == "pq":
-                    frame = tone_map_pq_frame(frame)
+                if self.hdr_transfer:
+                    frame = tone_map_hdr_frame(frame, self.hdr_transfer)
 
                 frame_clean = frame.copy()
 
@@ -302,28 +488,33 @@ class VideoProcessor:
                 if len(track_ids) > 0:
                     new_crossings = self.region_counter.update(track_ids, tracked_boxes)
 
-                # Anotar frame
-                annotated = self._annotate_frame(
-                    frame, tracked_boxes, track_ids, frame_clean
-                )
-                annotated = self._draw_roi_on_frame(annotated)
-
-                # Extraer crops de nuevos cruces
+                # Extraer crops ANTES de anotar (para que la anotacion use el label)
                 if new_crossings:
                     self._extract_crops(
-                        frame_clean, tracked_boxes, track_ids,
-                        new_crossings, frame_num,
+                        frame_clean,
+                        tracked_boxes,
+                        track_ids,
+                        new_crossings,
+                        frame_num,
                     )
 
-                writer.write(annotated)
+                # Anotar frame (in-place sobre frame, frame_clean se usa solo para crops)
+                self._annotate_frame(frame, tracked_boxes, track_ids)
+                self._draw_roi_on_frame(frame)
+
+                write_q.put(frame)
 
                 if frame_num % 10 == 0 and progress_callback:
                     progress_callback(
-                        frame_num, total_frames,
+                        frame_num,
+                        total_frames,
                         self.region_counter.in_count,
                         self.region_counter.out_count,
                     )
         finally:
+            write_q.put(None)  # Señal de fin para writer
+            t_reader.join(timeout=5)
+            t_writer.join(timeout=5)
             cap.release()
             writer.release()
 
@@ -337,6 +528,8 @@ class VideoProcessor:
             "out_count": self.region_counter.out_count,
             "total": self.region_counter.in_count + self.region_counter.out_count,
             "ripeness_counts": dict(self._ripeness_counts),
+            "in_ripeness": dict(self._in_ripeness),
+            "out_ripeness": dict(self._out_ripeness),
             "frames_processed": frame_num,
             "total_frames": total_frames,
         }
@@ -357,23 +550,17 @@ class VideoProcessor:
         return track_ids, boxes_xyxy
 
     def _classify_crop(self, crop: np.ndarray) -> tuple[str, float]:
-        """Clasifica un crop con el modelo de madurez."""
-        results = self.cls_model(crop, verbose=False)
-        probs = results[0].probs
-        label = results[0].names[probs.top1]
-        conf = float(probs.top1conf)
-        return label, conf
+        """Clasifica un crop con el clasificador ONNX directo."""
+        return self.classifier.classify(crop)
 
     def _annotate_frame(
         self,
         frame: np.ndarray,
         boxes: np.ndarray,
         track_ids: list[int],
-        frame_clean: np.ndarray,
-    ) -> np.ndarray:
-        """Dibuja bboxes, track IDs y madurez sobre el frame."""
-        annotated = frame.copy()
-        h, w = frame_clean.shape[:2]
+    ) -> None:
+        """Dibuja bboxes, track IDs y madurez sobre el frame (in-place)."""
+        h, w = frame.shape[:2]
 
         for i, tid in enumerate(track_ids):
             x1, y1, x2, y2 = map(int, boxes[i])
@@ -382,13 +569,7 @@ class VideoProcessor:
             if x2 <= x1 or y2 <= y1:
                 continue
 
-            # Clasificar (con cache)
-            if tid not in self._track_ripeness:
-                crop = frame_clean[y1:y2, x1:x2]
-                if crop.size > 0:
-                    label, conf = self._classify_crop(crop)
-                    self._track_ripeness[tid] = (label, conf)
-
+            # Solo usar cache — NO clasificar aqui (clasificacion diferida al cruzar ROI)
             if tid in self._track_ripeness:
                 label, conf = self._track_ripeness[tid]
                 color = _RIPENESS_COLORS.get(label, (200, 200, 200))
@@ -396,80 +577,145 @@ class VideoProcessor:
                 label, conf, color = "?", 0.0, (200, 200, 200)
 
             # Bbox
-            cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 2)
+            cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
 
             # Etiqueta: ID + madurez
-            text = f"#{tid} {label} {conf:.0%}"
+            text = f"#{tid} {label} {conf:.0%}" if label != "?" else f"#{tid}"
             font = cv2.FONT_HERSHEY_SIMPLEX
             fs, th_line = 0.45, 1
             (tw, th), baseline = cv2.getTextSize(text, font, fs, th_line)
             ty = max(y1 - 4, th + 4)
-            cv2.rectangle(annotated, (x1, ty - th - 4), (x1 + tw + 6, ty + baseline), color, -1)
-            cv2.putText(annotated, text, (x1 + 3, ty - 2), font, fs, (255, 255, 255), th_line, cv2.LINE_AA)
+            cv2.rectangle(
+                frame, (x1, ty - th - 4), (x1 + tw + 6, ty + baseline), color, -1
+            )
+            cv2.putText(
+                frame,
+                text,
+                (x1 + 3, ty - 2),
+                font,
+                fs,
+                (255, 255, 255),
+                th_line,
+                cv2.LINE_AA,
+            )
 
         # Leyenda unificada (esquina superior derecha)
-        self._draw_ripeness_legend(annotated)
-
-        return annotated
+        self._draw_ripeness_legend(frame)
 
     def _draw_ripeness_legend(self, frame: np.ndarray) -> None:
-        """Dibuja leyenda unificada con IN/OUT y conteo por madurez."""
+        """Dibuja leyenda con IN/OUT desglosado por madurez. Usa cache cuando los conteos no cambian."""
+        # Check si podemos usar cache
+        counts_hash = (
+            self.region_counter.in_count,
+            self.region_counter.out_count,
+            tuple(self._in_ripeness.values()),
+            tuple(self._out_ripeness.values()),
+        )
+        if counts_hash == self._legend_counts_hash and self._legend_cache is not None:
+            legend_img, y0, x0, bh, bw = self._legend_cache
+            # Blend rapido: fondo del frame actual + leyenda opaca pre-renderizada
+            roi = frame[y0 : y0 + bh, x0 : x0 + bw]
+            cv2.addWeighted(roi, 0.3, legend_img, 0.7, 0, dst=roi)
+            cv2.rectangle(
+                frame, (x0, y0), (x0 + bw, y0 + bh), (80, 80, 80), 1, cv2.LINE_AA
+            )
+            return
+
         font = cv2.FONT_HERSHEY_SIMPLEX
-        fs, thickness = 0.5, 1
-        line_h = 24
+        fs, thickness = 0.45, 1
+        line_h = 22
         pad = 10
         total = sum(self._ripeness_counts.values())
 
-        lines: list[tuple[str, int, tuple[int, int, int], bool]] = [
-            ("IN", self.region_counter.in_count, (230, 180, 0), False),
-            ("OUT", self.region_counter.out_count, (0, 140, 255), False),
-            ("Total", total, (255, 255, 255), False),
-        ]
+        lines: list[
+            tuple[str, tuple[int, int, int], int, bool, tuple[int, int, int] | None]
+        ] = []
+
+        lines.append(
+            (f"IN: {self.region_counter.in_count}", (230, 180, 0), 0, False, None)
+        )
         for label in ("green", "red", "turning", "brown"):
-            count = self._ripeness_counts[label]
-            color_bgr = _RIPENESS_COLORS[label]
-            lines.append((label.capitalize(), count, color_bgr, True))
+            count = self._in_ripeness.get(label, 0)
+            if count > 0:
+                color_bgr = _RIPENESS_COLORS[label]
+                lines.append(
+                    (f"{label.capitalize()}: {count}", (220, 220, 220), 12, True, color_bgr)
+                )
 
-        # Calcular ancho maximo del texto (con espacio para circulito)
+        lines.append(("", (0, 0, 0), 0, False, None))
+
+        lines.append(
+            (f"OUT: {self.region_counter.out_count}", (0, 140, 255), 0, False, None)
+        )
+        for label in ("green", "red", "turning", "brown"):
+            count = self._out_ripeness.get(label, 0)
+            if count > 0:
+                color_bgr = _RIPENESS_COLORS[label]
+                lines.append(
+                    (f"{label.capitalize()}: {count}", (220, 220, 220), 12, True, color_bgr)
+                )
+
+        lines.append(("", (0, 0, 0), 0, False, None))
+
+        lines.append((f"Total: {total}", (255, 255, 255), 0, False, None))
+        for label in ("green", "red", "turning", "brown"):
+            count = self._ripeness_counts.get(label, 0)
+            if count > 0:
+                color_bgr = _RIPENESS_COLORS[label]
+                lines.append(
+                    (f"{label.capitalize()}: {count}", (220, 220, 220), 12, True, color_bgr)
+                )
+
         max_tw = 0
-        for label_text, count, _, has_dot in lines:
-            text = f"{label_text}: {count}"
+        for text, _, indent, has_dot, _ in lines:
+            if not text:
+                continue
             (tw, _), _ = cv2.getTextSize(text, font, fs, thickness)
-            max_tw = max(max_tw, tw + (16 if has_dot else 0))
+            max_tw = max(max_tw, tw + indent + (14 if has_dot else 0))
 
-        # Separador entre IN/OUT/Total y las clases de madurez
-        separator_after = 2  # despues de "Total" (indice 2)
-        separator_h = 10
-
-        box_w = max_tw + pad * 2 + 4
-        box_h = len(lines) * line_h + pad * 2 + separator_h
+        separator_h = 8
+        num_separators = sum(1 for t, _, _, _, _ in lines if not t)
+        num_content = len(lines) - num_separators
+        box_w = max_tw + pad * 2 + 8
+        box_h = num_content * line_h + num_separators * separator_h + pad * 2
         h_frame, w_frame = frame.shape[:2]
         x0 = w_frame - box_w - 10
         y0 = 10
 
-        # Fondo oscuro semi-transparente
-        overlay = frame[y0 : y0 + box_h, x0 : x0 + box_w].copy()
-        dark = np.full_like(overlay, (30, 30, 30))
-        blended = cv2.addWeighted(overlay, 0.3, dark, 0.7, 0)
-        frame[y0 : y0 + box_h, x0 : x0 + box_w] = blended
-        cv2.rectangle(frame, (x0, y0), (x0 + box_w, y0 + box_h), (80, 80, 80), 1, cv2.LINE_AA)
+        x0 = max(0, x0)
+        box_w = min(box_w, w_frame - x0)
+        box_h = min(box_h, h_frame - y0)
 
-        # Dibujar cada linea
-        y_offset = 0
-        for i, (label_text, count, color, has_dot) in enumerate(lines):
-            if i == separator_after + 1:
-                # Linea separadora
-                sep_y = y0 + pad + i * line_h + y_offset
-                cv2.line(frame, (x0 + pad, sep_y), (x0 + box_w - pad, sep_y), (100, 100, 100), 1, cv2.LINE_AA)
-                y_offset += separator_h
+        # Renderizar leyenda en canvas separado (fondo oscuro)
+        legend_img = np.full((box_h, box_w, 3), 30, dtype=np.uint8)
+        cv2.rectangle(legend_img, (0, 0), (box_w - 1, box_h - 1), (80, 80, 80), 1, cv2.LINE_AA)
 
-            ty = y0 + pad + (i + 1) * line_h - 6 + y_offset
-            tx = x0 + pad
-            if has_dot:
-                cv2.circle(frame, (tx + 5, ty - 4), 5, color, -1, cv2.LINE_AA)
-                tx += 16
-            text = f"{label_text}: {count}"
-            cv2.putText(frame, text, (tx, ty), font, fs, color if not has_dot else (255, 255, 255), thickness, cv2.LINE_AA)
+        y_cursor = pad
+        for text, color, indent, has_dot, dot_color in lines:
+            if not text:
+                sep_y = y_cursor + separator_h // 2
+                cv2.line(legend_img, (pad, sep_y), (box_w - pad, sep_y), (100, 100, 100), 1, cv2.LINE_AA)
+                y_cursor += separator_h
+                continue
+
+            ty = y_cursor + line_h - 6
+            tx = pad + indent
+            if has_dot and dot_color:
+                cv2.circle(legend_img, (tx + 5, ty - 4), 5, dot_color, -1, cv2.LINE_AA)
+                tx += 14
+            cv2.putText(legend_img, text, (tx, ty), font, fs, color, thickness, cv2.LINE_AA)
+            y_cursor += line_h
+
+        # Guardar cache
+        self._legend_cache = (legend_img, y0, x0, box_h, box_w)
+        self._legend_counts_hash = counts_hash
+
+        # Aplicar al frame
+        roi = frame[y0 : y0 + box_h, x0 : x0 + box_w]
+        cv2.addWeighted(roi, 0.3, legend_img, 0.7, 0, dst=roi)
+        cv2.rectangle(
+            frame, (x0, y0), (x0 + box_w, y0 + box_h), (80, 80, 80), 1, cv2.LINE_AA
+        )
 
     def _extract_crops(
         self,
@@ -499,16 +745,27 @@ class VideoProcessor:
                 label, conf = self._classify_crop(crop)
                 self._track_ripeness[tid] = (label, conf)
 
+            # Obtener direccion de cruce
+            direction = self.region_counter.get_direction(tid) or "unknown"
+
             self.crops.append(crop_padded)
-            self.crop_metadata.append({
-                "track_id": tid,
-                "frame": frame_num,
-                "bbox": (x1, y1, x2, y2),
-                "ripeness": label,
-                "ripeness_conf": conf,
-            })
+            self.crop_metadata.append(
+                {
+                    "track_id": tid,
+                    "frame": frame_num,
+                    "bbox": (x1, y1, x2, y2),
+                    "ripeness": label,
+                    "ripeness_conf": conf,
+                    "direction": direction,
+                }
+            )
             if label in self._ripeness_counts:
                 self._ripeness_counts[label] += 1
+            # Conteo de madurez por direccion
+            if direction == "in" and label in self._in_ripeness:
+                self._in_ripeness[label] += 1
+            elif direction == "out" and label in self._out_ripeness:
+                self._out_ripeness[label] += 1
 
     # --- ROI overlay (same as before) ---
 
@@ -516,27 +773,42 @@ class VideoProcessor:
         pts = np.array(self.roi_points, dtype=np.int32)
         self._roi_mask = np.zeros((h, w), dtype=np.uint8)
         if len(self.roi_points) == 2:
-            cv2.line(self._roi_mask, self.roi_points[0], self.roi_points[1], 255, thickness=30)
+            cv2.line(
+                self._roi_mask,
+                self.roi_points[0],
+                self.roi_points[1],
+                255,
+                thickness=30,
+            )
         else:
             cv2.fillPoly(self._roi_mask, [pts], 255)
         self._roi_overlay = np.zeros((h, w, 3), dtype=np.uint8)
         self._roi_overlay[self._roi_mask > 0] = (0, 230, 118)
 
-    def _draw_roi_on_frame(self, frame: np.ndarray) -> np.ndarray:
+    def _draw_roi_on_frame(self, frame: np.ndarray) -> None:
+        """Dibuja ROI overlay in-place sobre el frame."""
         if self._roi_mask is None:
-            return frame
-        result = frame.copy()
+            return
         mask = self._roi_mask > 0
-        result[mask] = cv2.addWeighted(
-            frame[mask].reshape(-1, 3), 0.75,
-            self._roi_overlay[mask].reshape(-1, 3), 0.25, 0,
+        frame[mask] = cv2.addWeighted(
+            frame[mask].reshape(-1, 3),
+            0.75,
+            self._roi_overlay[mask].reshape(-1, 3),
+            0.25,
+            0,
         ).reshape(-1, 3)
         pts = np.array(self.roi_points, dtype=np.int32)
         if len(self.roi_points) == 2:
-            cv2.line(result, self.roi_points[0], self.roi_points[1], (0, 230, 118), 2, cv2.LINE_AA)
+            cv2.line(
+                frame,
+                self.roi_points[0],
+                self.roi_points[1],
+                (0, 230, 118),
+                2,
+                cv2.LINE_AA,
+            )
         else:
-            cv2.polylines(result, [pts], True, (0, 230, 118), 2, cv2.LINE_AA)
-        return result
+            cv2.polylines(frame, [pts], True, (0, 230, 118), 2, cv2.LINE_AA)
 
     @staticmethod
     def _bbox_iou(b1: tuple, b2: tuple) -> float:

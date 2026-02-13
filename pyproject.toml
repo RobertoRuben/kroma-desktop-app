@@ -1,0 +1,30 @@
+[project]
+name = "pepper-counter"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "flet[all]>=0.25.0",
+    "ultralytics>=8.4.6",
+    "opencv-python",
+    "torch",
+    "torchvision",
+    "torchaudio",
+    "python-dotenv>=1.2.1",
+    "pymediainfo>=7.0.1",
+]
+
+# --- CONFIGURACIÓN PARA GPU (CUDA 12.4) CON UV ---
+
+# 1. Definimos el índice de paquetes de PyTorch con soporte CUDA
+[[tool.uv.index]]
+name = "pytorch-cuda"
+url = "https://download.pytorch.org/whl/cu124"
+explicit = true
+
+# 2. Forzamos a 'uv' a descargar estas librerías desde el índice CUDA definido arriba
+[tool.uv.sources]
+torch = { index = "pytorch-cuda" }
+torchvision = { index = "pytorch-cuda" }
+torchaudio = { index = "pytorch-cuda" }

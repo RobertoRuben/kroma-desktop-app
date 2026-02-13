@@ -1,0 +1,25 @@
+# Ultralytics BoT-SORT tracker configuration
+# Optimizado para conteo de objetos cruzando línea
+
+tracker_type: botsort
+
+# Parámetros de tracking
+track_high_thresh: 0.3       # Umbral alto para primera asociación
+track_low_thresh: 0.1        # Umbral bajo para segunda asociación
+new_track_thresh: 0.4        # Umbral para crear nuevo track
+track_buffer: 60             # Frames para mantener tracks perdidos (más alto = más persistente)
+match_thresh: 0.8            # Umbral de matching
+
+# Parámetros GMC (Global Motion Compensation)
+gmc_method: sparseOptFlow    # Método de compensación de movimiento global
+proximity_thresh: 0.5
+appearance_thresh: 0.25
+
+# Parámetros de Re-ID (Re-Identificación)
+with_reid: false             # No usar modelo de re-id (más rápido)
+
+# Fuse confidence score con IoU para asociación
+fuse_score: true
+
+# Kalman Filter
+cmc_method: sparseOptFlow

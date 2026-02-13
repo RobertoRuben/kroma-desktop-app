@@ -3,7 +3,6 @@ import threading
 
 import cv2
 import flet as ft
-import torch
 
 from src.processing.video_processor import VideoProcessor, apply_rotation, detect_video_rotation
 from src.ui.crop_gallery import CropGallery
@@ -16,7 +15,8 @@ from src.utils.image_utils import (
 )
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-MODEL_PATH = os.path.join(BASE_DIR, "best.pt")
+DET_MODEL_PATH = os.path.join(BASE_DIR, "src", "weights", "pepper_det.onnx")
+CLS_MODEL_PATH = os.path.join(BASE_DIR, "src", "weights", "pepper_ripeness_cls_v1.onnx")
 TRACKER_CONFIG = os.path.join(BASE_DIR, "botsort.yaml")
 DEFAULT_CONFIDENCE = 0.40
 DISPLAY_MAX_W = 800
@@ -48,7 +48,11 @@ def main(page: ft.Page):
     page.services.append(file_picker)
 
     # --- GPU Switch ---
-    cuda_available = torch.cuda.is_available()
+    try:
+        import onnxruntime as ort
+        cuda_available = "CUDAExecutionProvider" in ort.get_available_providers()
+    except ImportError:
+        cuda_available = False
     gpu_switch = ft.Switch(
         label="GPU (CUDA)" if cuda_available else "GPU (no disponible)",
         value=cuda_available,
@@ -248,8 +252,11 @@ def main(page: ft.Page):
             show_snackbar("Se necesitan al menos 2 puntos para el ROI.", error=True)
             return
 
-        if not os.path.exists(MODEL_PATH):
-            show_snackbar(f"No se encuentra el modelo: {MODEL_PATH}", error=True)
+        if not os.path.exists(DET_MODEL_PATH):
+            show_snackbar(f"No se encuentra el modelo: {DET_MODEL_PATH}", error=True)
+            return
+        if not os.path.exists(CLS_MODEL_PATH):
+            show_snackbar(f"No se encuentra el clasificador: {CLS_MODEL_PATH}", error=True)
             return
 
         state["processing"] = True
@@ -267,7 +274,8 @@ def main(page: ft.Page):
         try:
             processor = VideoProcessor(
                 video_path=state["video_path"],
-                model_path=MODEL_PATH,
+                model_path=DET_MODEL_PATH,
+                cls_model_path=CLS_MODEL_PATH,
                 tracker_config=TRACKER_CONFIG,
                 roi_points=roi_points,
                 use_gpu=gpu_switch.value,

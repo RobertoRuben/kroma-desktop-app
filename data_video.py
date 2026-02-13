@@ -1,33 +1,19 @@
-from pymediainfo import MediaInfo
+from ultralytics import YOLO
 
-file_path = r"D:\Proyectos\pepper-counter\20260212_092659.mp4"
+# Ruta a tu modelo de pimientos
+model_path = r"D:\Proyectos\pepper-counter\pepper_ripeness_cls_v1.pt"
 
-def get_video_details(path):
-    media_info = MediaInfo.parse(path)
-    video_track = None
+# Cargar modelo
+model = YOLO(model_path)
 
-    for track in media_info.tracks:
-        if track.track_type == "Video":
-            video_track = track
-            break
+# Obtener nombres y ordenarlos por su ID
+class_names = model.names
+ordered_classes = [class_names[i] for i in sorted(class_names.keys())]
 
-    if video_track:
-        print(f"--- Detalles de Video: {path} ---")
-        print(f"Codec ID: {video_track.codec_id}")
-        print(f"Formato: {video_track.format}")
-        print(f"Perfil del formato: {video_track.format_profile}")
-        print(f"Ancho x Alto: {video_track.width}x{video_track.height}")
-        print(f"Frame Rate: {video_track.frame_rate} fps")
-        
-        print("\n--- Detalles de Color (Aquí suele estar el problema) ---")
-        print(f"Espacio de color: {video_track.color_space}")
-        print(f"Chroma subsampling: {video_track.chroma_subsampling}")
-        print(f"Bit depth: {video_track.bit_depth} bits")
-        print(f"Primarias de color: {video_track.color_primaries}")
-        print(f"Características de transferencia: {video_track.transfer_characteristics}")
-        print(f"Coeficientes de matriz: {video_track.matrix_coefficients}")
-        print(f"Rango de color: {video_track.color_range}") # Importante: Limited vs Full
-    else:
-        print("No se encontró una pista de video en el archivo.")
+print("--- LISTA DE CLASES EN ORDEN (ÍNDICE: NOMBRE) ---")
+for idx, name in enumerate(ordered_classes):
+    print(f"{idx}: '{name}'")
 
-get_video_details(file_path)
+# Exportar como lista pura por si la necesitas en otro script
+print("\nComo lista de Python:")
+print(ordered_classes)

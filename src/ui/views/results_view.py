@@ -1,6 +1,7 @@
 """Vista de resultados del procesamiento."""
 
 import os
+import shutil
 
 import flet as ft
 import numpy as np
@@ -18,14 +19,20 @@ class ResultsView(ft.Column):
         result: ProcessingResult,
         crop_images: list[np.ndarray],
         palette: dict,
+        page: ft.Page,
         on_reset: callable = None,
     ):
         super().__init__()
         self._result = result
         self._crop_images = crop_images
         self._pal = palette
+        self._page = page
         self._on_reset = on_reset
         self.spacing = 10
+
+        self._save_picker = ft.FilePicker()
+        page.services.append(self._save_picker)
+
         self._build()
 
     def _build(self):
@@ -84,11 +91,14 @@ class ResultsView(ft.Column):
                                 icon=ft.Icons.PLAY_CIRCLE,
                                 on_click=lambda e: os.startfile(result.output_path),
                             ),
-                            ft.OutlinedButton(
-                                "Abrir Carpeta",
-                                icon=ft.Icons.FOLDER_OPEN,
-                                on_click=lambda e: os.startfile(
-                                    os.path.dirname(result.output_path)
+                            ft.ElevatedButton(
+                                "Guardar Video",
+                                icon=ft.Icons.SAVE_ALT,
+                                on_click=self._handle_save_video,
+                                style=ft.ButtonStyle(
+                                    bgcolor=pal["primary"],
+                                    color=pal["primary_foreground"],
+                                    shape=ft.RoundedRectangleBorder(radius=8),
                                 ),
                             ),
                         ],
@@ -129,6 +139,38 @@ class ResultsView(ft.Column):
             )
 
         self.controls = controls
+
+    async def _handle_save_video(self, _e) -> None:
+        """Open save-file dialog to copy the processed video."""
+        source = self._result.output_path
+        default_name = os.path.basename(source)
+        dest = await self._save_picker.save_file(
+            dialog_title="Guardar video procesado",
+            file_name=default_name,
+            file_type=ft.FilePickerFileType.CUSTOM,
+            allowed_extensions=["mp4"],
+        )
+        if not dest:
+            return
+        if not dest.lower().endswith(".mp4"):
+            dest += ".mp4"
+        try:
+            shutil.copy2(source, dest)
+            snack = ft.SnackBar(
+                content=ft.Text(f"Video guardado en: {dest}"),
+                bgcolor=self._pal["primary"],
+                open=True,
+            )
+            self._page.overlay.append(snack)
+            self._page.update()
+        except Exception as exc:
+            snack = ft.SnackBar(
+                content=ft.Text(f"Error al guardar: {exc}"),
+                bgcolor=self._pal["destructive"],
+                open=True,
+            )
+            self._page.overlay.append(snack)
+            self._page.update()
 
 
 def _count_chip(label: str, value: str, color: str, pal: dict) -> ft.Container:

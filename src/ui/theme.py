@@ -31,6 +31,8 @@ LIGHT = {
     "sidebar_fg": "#FFFFFF",
     "sidebar_accent": "#3E9C6B",
     "sidebar_border": "#3A5C4A",
+    "step_completed": "#4B8C6B",
+    "step_pending": "#E3ECE7",
 }
 
 # Modo oscuro
@@ -58,6 +60,8 @@ DARK = {
     "sidebar_fg": "#FFFFFF",
     "sidebar_accent": "#3E9C6B",
     "sidebar_border": "#2A3A2A",
+    "step_completed": "#4B8C6B",
+    "step_pending": "#232E29",
 }
 
 

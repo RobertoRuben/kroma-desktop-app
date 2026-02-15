@@ -1,4 +1,6 @@
 from src.config.settings import (
+    API_BASE_URL,
+    API_TIMEOUT,
     BASE_DIR,
     CLS_MODEL_PATH,
     CROP_SIZE,
@@ -17,6 +19,8 @@ from src.config.colors import (
 )
 
 __all__ = [
+    "API_BASE_URL",
+    "API_TIMEOUT",
     "BASE_DIR",
     "CLS_MODEL_PATH",
     "CROP_SIZE",

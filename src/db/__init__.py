@@ -1,9 +1,14 @@
+import os
+
 from sqlmodel import SQLModel, create_engine, Session, text
 from sqlalchemy import event
 from sqlalchemy.engine import Engine
 
-# Database configuration
-SQLITE_URL = "sqlite:///kroma_desktop.db"
+from src.config.settings import BASE_DIR
+
+# Database configuration — store next to the executable / project root
+_DB_PATH = os.path.join(BASE_DIR, "kroma_desktop.db")
+SQLITE_URL = f"sqlite:///{_DB_PATH}"
 
 # SQLModel.create_engine is a direct proxy to SQLAlchemy's create_engine
 engine = create_engine(SQLITE_URL, echo=False)
@@ -31,9 +36,11 @@ def create_db_and_tables() -> None:
     This must be called at app startup. It imports all model modules
     to ensure they are registered in the metadata.
     """
-    from .models.catalogs import AgriculturalUnit, AgriculturalCampaign
-    from .models.production import ProductionUnit
-    from .models.analysis import AnalysisRecord
+    # Import models so SQLModel registers them in metadata
+    import src.model.catalogs  # noqa: F401
+    import src.model.production  # noqa: F401
+    import src.model.analysis  # noqa: F401
+    import src.model.auth  # noqa: F401
 
     SQLModel.metadata.create_all(engine)
 

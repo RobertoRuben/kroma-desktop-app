@@ -198,6 +198,26 @@ class VideoProcessor:
         boxes_xyxy = tracks[:, :4]
         return track_ids, boxes_xyxy
 
+    def _classify_tracks(
+        self,
+        frame: np.ndarray,
+        boxes: np.ndarray,
+        track_ids: list[int],
+    ) -> None:
+        """Clasifica tracks que aun no tienen ripeness asignado."""
+        h, w = frame.shape[:2]
+        for i, tid in enumerate(track_ids):
+            if tid in self._track_ripeness:
+                continue
+            x1, y1, x2, y2 = map(int, boxes[i])
+            x1, y1 = max(0, x1), max(0, y1)
+            x2, y2 = min(w, x2), min(h, y2)
+            if x2 <= x1 or y2 <= y1:
+                continue
+            crop = frame[y1:y2, x1:x2]
+            ripeness_cls, conf = self.classifier.classify(crop)
+            self._track_ripeness[tid] = (ripeness_cls, conf)
+
     def _extract_crops(
         self,
         frame: np.ndarray,

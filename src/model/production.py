@@ -11,7 +11,7 @@ from sqlmodel import (
 from .base import BaseTimestampMixin
 
 if TYPE_CHECKING:
-    from .catalogs import AgriculturalCampaign, AgriculturalUnit
+    from .catalogs import AgriculturalCampaign, AgriculturalUnit, Module, Shift, Batch
     from .analysis import AnalysisRecord
 
 
@@ -22,9 +22,9 @@ class ProductionUnit(BaseTimestampMixin, SQLModel, table=True):
         id: Primary key (64-bit integer).
         agricultural_campaign_id: FK to the campaign.
         agricultural_unit_id: FK to the farm.
-        module_id: Identifier for the specific production module.
-        shift_id: Identifier for the work shift.
-        batch_id: Identifier for the specific produce batch.
+        module_id: FK to the production module.
+        shift_id: FK to the work shift.
+        batch_id: FK to the produce batch.
     """
 
     __tablename__ = "production_units"
@@ -55,9 +55,27 @@ class ProductionUnit(BaseTimestampMixin, SQLModel, table=True):
             nullable=False,
         )
     )
-    module_id: int = Field(sa_column=Column(BIGINT, nullable=False))
-    shift_id: int = Field(sa_column=Column(BIGINT, nullable=False))
-    batch_id: int = Field(sa_column=Column(BIGINT, nullable=False))
+    module_id: int = Field(
+        sa_column=Column(
+            BIGINT,
+            ForeignKey("modules.id", ondelete="CASCADE"),
+            nullable=False,
+        )
+    )
+    shift_id: int = Field(
+        sa_column=Column(
+            BIGINT,
+            ForeignKey("shifts.id", ondelete="CASCADE"),
+            nullable=False,
+        )
+    )
+    batch_id: int = Field(
+        sa_column=Column(
+            BIGINT,
+            ForeignKey("batches.id", ondelete="CASCADE"),
+            nullable=False,
+        )
+    )
 
     agricultural_campaign: "AgriculturalCampaign" = Relationship(
         back_populates="production_units"
@@ -65,6 +83,9 @@ class ProductionUnit(BaseTimestampMixin, SQLModel, table=True):
     agricultural_unit: "AgriculturalUnit" = Relationship(
         back_populates="production_units"
     )
+    module: "Module" = Relationship(back_populates="production_units")
+    shift: "Shift" = Relationship(back_populates="production_units")
+    batch: "Batch" = Relationship(back_populates="production_units")
     analysis_records: list["AnalysisRecord"] = Relationship(
         back_populates="production_unit"
     )

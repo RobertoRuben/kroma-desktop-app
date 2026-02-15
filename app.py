@@ -13,8 +13,8 @@ from src.config import (
     DISPLAY_MAX_W,
     TRACKER_CONFIG,
 )
-from src.schemas import ProcessingResult
 from src.processing.video_processor import VideoProcessor
+from src.schemas import ProcessingResult
 from src.services.video_loader import VideoLoader
 from src.ui.components.roi_canvas import ROICanvas
 from src.ui.theme import LIGHT, build_dark_theme, build_light_theme, palette
@@ -34,13 +34,13 @@ def main(page: ft.Page):
 
     # --- State ---
     state = {
-        "video_info": None,       # VideoInfo | None
+        "video_info": None,  # VideoInfo | None
         "scale_x": 1.0,
         "scale_y": 1.0,
         "display_w": 0,
         "display_h": 0,
         "processing": False,
-        "last_result": None,      # ProcessingResult | None
+        "last_result": None,  # ProcessingResult | None
         "last_crop_images": None,  # list[np.ndarray] | None
     }
 
@@ -51,6 +51,7 @@ def main(page: ft.Page):
     # --- GPU Switch ---
     try:
         import onnxruntime as ort
+
         cuda_available = "CUDAExecutionProvider" in ort.get_available_providers()
     except ImportError:
         cuda_available = False
@@ -76,22 +77,32 @@ def main(page: ft.Page):
             on_file_picked(result)
 
     btn_select_video = ft.Button(
-        "Seleccionar Video", icon=ft.Icons.VIDEO_FILE, on_click=on_select_video,
+        "Seleccionar Video",
+        icon=ft.Icons.VIDEO_FILE,
+        on_click=on_select_video,
     )
 
     step1_card = ft.Card(
         content=ft.Container(
             content=ft.ResponsiveRow(
                 [
-                    ft.Text("Paso 1: Cargar Video", size=18, weight=ft.FontWeight.BOLD, col=12),
+                    ft.Text(
+                        "Paso 1: Cargar Video",
+                        size=18,
+                        weight=ft.FontWeight.BOLD,
+                        col=12,
+                    ),
                     ft.Container(
-                        content=ft.Row([btn_select_video, video_name_text], spacing=15, wrap=True),
+                        content=ft.Row(
+                            [btn_select_video, video_name_text], spacing=15, wrap=True
+                        ),
                         col={"sm": 12, "md": 8},
                     ),
                     ft.Container(content=gpu_switch, col={"sm": 12, "md": 4}),
                 ],
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                spacing=10, run_spacing=10,
+                spacing=10,
+                run_spacing=10,
             ),
             padding=20,
         ),
@@ -103,7 +114,11 @@ def main(page: ft.Page):
         content=ft.Container(
             content=ft.Column(
                 [
-                    ft.Text("Paso 2: Definir Zona de Interes (ROI)", size=18, weight=ft.FontWeight.BOLD),
+                    ft.Text(
+                        "Paso 2: Definir Zona de Interes (ROI)",
+                        size=18,
+                        weight=ft.FontWeight.BOLD,
+                    ),
                     roi_container,
                 ],
                 spacing=10,
@@ -122,8 +137,12 @@ def main(page: ft.Page):
         content=ft.Container(
             content=ft.Column(
                 [
-                    ft.Text("Paso 3: Procesamiento", size=18, weight=ft.FontWeight.BOLD),
-                    progress_text, progress_bar, counts_text,
+                    ft.Text(
+                        "Paso 3: Procesamiento", size=18, weight=ft.FontWeight.BOLD
+                    ),
+                    progress_text,
+                    progress_bar,
+                    counts_text,
                 ],
                 spacing=10,
             ),
@@ -137,7 +156,10 @@ def main(page: ft.Page):
     step4_card = ft.Card(
         content=ft.Container(
             content=ft.Column(
-                [ft.Text("Resultados", size=18, weight=ft.FontWeight.BOLD), results_container],
+                [
+                    ft.Text("Resultados", size=18, weight=ft.FontWeight.BOLD),
+                    results_container,
+                ],
                 spacing=10,
             ),
             padding=20,
@@ -167,7 +189,9 @@ def main(page: ft.Page):
         page.update()
 
     dark_mode_btn = ft.IconButton(
-        icon=ft.Icons.DARK_MODE, tooltip="Cambiar a modo oscuro", on_click=_toggle_dark_mode,
+        icon=ft.Icons.DARK_MODE,
+        tooltip="Cambiar a modo oscuro",
+        on_click=_toggle_dark_mode,
     )
 
     # --- Layout ---
@@ -182,9 +206,13 @@ def main(page: ft.Page):
                     alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 ),
-                step1_card, step2_card, step3_card, step4_card,
+                step1_card,
+                step2_card,
+                step3_card,
+                step4_card,
             ],
-            spacing=15, expand=True,
+            spacing=15,
+            expand=True,
         )
     )
 
@@ -209,7 +237,9 @@ def main(page: ft.Page):
 
         available_w = int((page.width or 960) - 100)
         display_max_w = max(400, min(available_w, DISPLAY_MAX_W))
-        resized, sx, sy = resize_frame_for_display(video_info.first_frame, display_max_w, DISPLAY_MAX_H)
+        resized, sx, sy = resize_frame_for_display(
+            video_info.first_frame, display_max_w, DISPLAY_MAX_H
+        )
         state["scale_x"] = sx
         state["scale_y"] = sy
         state["display_w"] = resized.shape[1]
@@ -247,7 +277,9 @@ def main(page: ft.Page):
             show_snackbar(f"No se encuentra el modelo: {DET_MODEL_PATH}", error=True)
             return
         if not os.path.exists(CLS_MODEL_PATH):
-            show_snackbar(f"No se encuentra el clasificador: {CLS_MODEL_PATH}", error=True)
+            show_snackbar(
+                f"No se encuentra el clasificador: {CLS_MODEL_PATH}", error=True
+            )
             return
 
         state["processing"] = True
@@ -276,17 +308,19 @@ def main(page: ft.Page):
             def on_progress(frame_num, total_frames, in_count, out_count):
                 pct = frame_num / total_frames if total_frames > 0 else 0
                 progress_bar.value = pct
-                progress_text.value = f"Frame {frame_num}/{total_frames} ({pct * 100:.1f}%)"
-                counts_text.value = f"IN: {in_count} | OUT: {out_count} | Total: {in_count + out_count}"
+                progress_text.value = (
+                    f"Frame {frame_num}/{total_frames} ({pct * 100:.1f}%)"
+                )
+                counts_text.value = (
+                    f"IN: {in_count} | OUT: {out_count} | Total: {in_count + out_count}"
+                )
                 page.update()
 
             result = processor.process(progress_callback=on_progress)
 
             progress_bar.value = 1.0
             progress_text.value = "Procesamiento completado!"
-            counts_text.value = (
-                f"IN: {result.in_count} | OUT: {result.out_count} | Total: {result.total}"
-            )
+            counts_text.value = f"IN: {result.in_count} | OUT: {result.out_count} | Total: {result.total}"
             page.update()
 
             show_results(result, result.crop_images)

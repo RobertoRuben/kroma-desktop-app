@@ -18,14 +18,12 @@ class ResultsView(ft.Column):
         self,
         result: ProcessingResult,
         crop_images: list[np.ndarray],
-        palette: dict,
         page: ft.Page,
         on_reset: callable = None,
     ):
         super().__init__()
         self._result = result
         self._crop_images = crop_images
-        self._pal = palette
         self._page = page
         self._on_reset = on_reset
         self.spacing = 10
@@ -36,7 +34,6 @@ class ResultsView(ft.Column):
         self._build()
 
     def _build(self):
-        pal = self._pal
         result = self._result
 
         summary = ft.Container(
@@ -44,8 +41,9 @@ class ResultsView(ft.Column):
                 [
                     ft.Row(
                         [
-                            ft.Icon(ft.Icons.ANALYTICS, color=pal["primary"], size=20),
-                            ft.Text("Resumen", size=16, weight=ft.FontWeight.BOLD, color=pal["card_foreground"]),
+                            ft.Icon(ft.Icons.ANALYTICS, color=ft.Colors.PRIMARY, size=20),
+                            ft.Text("Resumen", size=16, weight=ft.FontWeight.BOLD,
+                                    color=ft.Colors.ON_SURFACE),
                         ],
                         spacing=8,
                     ),
@@ -54,19 +52,19 @@ class ResultsView(ft.Column):
                             [
                                 ft.Container(
                                     content=_count_chip(
-                                        "Total Frutos", str(result.total), pal["primary"], pal,
+                                        "Total Frutos", str(result.total), ft.Colors.PRIMARY,
                                     ),
                                     col={"xs": 12, "sm": 4},
                                 ),
                                 ft.Container(
                                     content=_count_chip(
-                                        "IN", str(result.in_count), pal["sidebar_accent"], pal,
+                                        "IN", str(result.in_count), ft.Colors.PRIMARY,
                                     ),
                                     col={"xs": 6, "sm": 4},
                                 ),
                                 ft.Container(
                                     content=_count_chip(
-                                        "OUT", str(result.out_count), pal["accent"], pal,
+                                        "OUT", str(result.out_count), ft.Colors.ON_SURFACE,
                                     ),
                                     col={"xs": 6, "sm": 4},
                                 ),
@@ -74,15 +72,15 @@ class ResultsView(ft.Column):
                             spacing=10,
                             run_spacing=10,
                         ),
-                        bgcolor=pal["secondary"],
+                        bgcolor=ft.Colors.SURFACE_CONTAINER_LOW,
                         border_radius=10,
                         padding=10,
                     ),
-                    _ripeness_breakdown(result, pal),
+                    _ripeness_breakdown(result),
                     ft.Text(
                         f"Frames procesados: {result.frames_processed}/{result.total_frames}",
                         size=12,
-                        color=pal["muted_foreground"],
+                        color=ft.Colors.ON_SURFACE_VARIANT,
                     ),
                     ft.Row(
                         [
@@ -96,8 +94,8 @@ class ResultsView(ft.Column):
                                 icon=ft.Icons.SAVE_ALT,
                                 on_click=self._handle_save_video,
                                 style=ft.ButtonStyle(
-                                    bgcolor=pal["primary"],
-                                    color=pal["primary_foreground"],
+                                    bgcolor=ft.Colors.PRIMARY,
+                                    color=ft.Colors.ON_PRIMARY,
                                     shape=ft.RoundedRectangleBorder(radius=8),
                                 ),
                             ),
@@ -111,13 +109,12 @@ class ResultsView(ft.Column):
             padding=10,
         )
 
-        controls = [summary, ft.Divider(color=pal["border"])]
+        controls = [summary, ft.Divider(color=ft.Colors.OUTLINE_VARIANT)]
 
         if self._crop_images:
             gallery = CropGallery(
                 crop_images=self._crop_images,
                 crop_infos=result.crops,
-                palette=pal,
             )
             controls.append(gallery)
         else:
@@ -125,7 +122,7 @@ class ResultsView(ft.Column):
                 ft.Text(
                     "No se detectaron objetos cruzando la zona de interes.",
                     italic=True,
-                    color=pal["muted_foreground"],
+                    color=ft.Colors.ON_SURFACE_VARIANT,
                 )
             )
 
@@ -158,40 +155,41 @@ class ResultsView(ft.Column):
             shutil.copy2(source, dest)
             snack = ft.SnackBar(
                 content=ft.Text(f"Video guardado en: {dest}"),
-                bgcolor=self._pal["primary"],
+                bgcolor=ft.Colors.PRIMARY,
                 open=True,
             )
             self._page.overlay.append(snack)
             self._page.update()
         except Exception as exc:
+            error_msg = str(exc)
             snack = ft.SnackBar(
-                content=ft.Text(f"Error al guardar: {exc}"),
-                bgcolor=self._pal["destructive"],
+                content=ft.Text(f"Error al guardar: {error_msg}"),
+                bgcolor=ft.Colors.ERROR,
                 open=True,
             )
             self._page.overlay.append(snack)
             self._page.update()
 
 
-def _count_chip(label: str, value: str, color: str, pal: dict) -> ft.Container:
+def _count_chip(label: str, value: str, color: str) -> ft.Container:
     return ft.Container(
         content=ft.Column(
             [
                 ft.Text(value, size=32, weight=ft.FontWeight.BOLD, color=color),
-                ft.Text(label, size=12, color=pal["muted_foreground"]),
+                ft.Text(label, size=12, color=ft.Colors.ON_SURFACE_VARIANT),
             ],
             horizontal_alignment=ft.CrossAxisAlignment.CENTER,
             spacing=2,
         ),
         padding=ft.Padding.symmetric(horizontal=20, vertical=10),
-        border=ft.Border.all(1, pal["border"]),
+        border=ft.Border.all(1, ft.Colors.OUTLINE_VARIANT),
         border_radius=12,
-        bgcolor=pal["card"],
+        bgcolor=ft.Colors.SURFACE_CONTAINER_LOWEST,
         alignment=ft.Alignment.CENTER,
     )
 
 
-def _ripeness_breakdown(result: ProcessingResult, pal: dict) -> ft.Container:
+def _ripeness_breakdown(result: ProcessingResult) -> ft.Container:
     """Tabla visual con desglose de madurez por IN/OUT."""
 
     def _num_cell(value: str, bold: bool = False) -> ft.Container:
@@ -201,7 +199,7 @@ def _ripeness_breakdown(result: ProcessingResult, pal: dict) -> ft.Container:
                 size=11,
                 weight=ft.FontWeight.BOLD if bold else None,
                 text_align=ft.TextAlign.CENTER,
-                color=pal["card_foreground"],
+                color=ft.Colors.ON_SURFACE,
             ),
             alignment=ft.Alignment.CENTER,
             col={"xs": 2, "sm": 2},
@@ -211,24 +209,24 @@ def _ripeness_breakdown(result: ProcessingResult, pal: dict) -> ft.Container:
         [
             ft.Container(
                 ft.Text("Madurez", size=11, weight=ft.FontWeight.BOLD,
-                        color=pal["card_foreground"]),
+                        color=ft.Colors.ON_SURFACE),
                 col={"xs": 6, "sm": 6},
             ),
             ft.Container(
                 ft.Text("IN", size=11, weight=ft.FontWeight.BOLD,
-                        color=pal["sidebar_accent"], text_align=ft.TextAlign.CENTER),
+                        color=ft.Colors.PRIMARY, text_align=ft.TextAlign.CENTER),
                 alignment=ft.Alignment.CENTER,
                 col={"xs": 2, "sm": 2},
             ),
             ft.Container(
                 ft.Text("OUT", size=11, weight=ft.FontWeight.BOLD,
-                        color=pal["accent"], text_align=ft.TextAlign.CENTER),
+                        color=ft.Colors.ON_SURFACE, text_align=ft.TextAlign.CENTER),
                 alignment=ft.Alignment.CENTER,
                 col={"xs": 2, "sm": 2},
             ),
             ft.Container(
                 ft.Text("Total", size=11, weight=ft.FontWeight.BOLD,
-                        text_align=ft.TextAlign.CENTER, color=pal["card_foreground"]),
+                        text_align=ft.TextAlign.CENTER, color=ft.Colors.ON_SURFACE),
                 alignment=ft.Alignment.CENTER,
                 col={"xs": 2, "sm": 2},
             ),
@@ -237,7 +235,7 @@ def _ripeness_breakdown(result: ProcessingResult, pal: dict) -> ft.Container:
         run_spacing=0,
     )
 
-    rows = [header, ft.Divider(height=1, color=pal["border"])]
+    rows = [header, ft.Divider(height=1, color=ft.Colors.OUTLINE_VARIANT)]
     for cls in ALL_RIPENESS_CLASSES:
         color_hex = RIPENESS_COLORS[cls].hex
         row = ft.ResponsiveRow(
@@ -246,7 +244,7 @@ def _ripeness_breakdown(result: ProcessingResult, pal: dict) -> ft.Container:
                     content=ft.Row(
                         [
                             ft.Container(width=10, height=10, bgcolor=color_hex, border_radius=5),
-                            ft.Text(cls.value.capitalize(), size=11, color=pal["card_foreground"]),
+                            ft.Text(cls.value.capitalize(), size=11, color=ft.Colors.ON_SURFACE),
                         ],
                         spacing=6,
                     ),
@@ -265,7 +263,7 @@ def _ripeness_breakdown(result: ProcessingResult, pal: dict) -> ft.Container:
     return ft.Container(
         content=ft.Column(rows, spacing=4),
         padding=10,
-        border=ft.Border.all(1, pal["border"]),
+        border=ft.Border.all(1, ft.Colors.OUTLINE_VARIANT),
         border_radius=8,
-        bgcolor=pal["card"],
+        bgcolor=ft.Colors.SURFACE_CONTAINER_LOWEST,
     )

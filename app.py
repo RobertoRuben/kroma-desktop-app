@@ -31,8 +31,7 @@ def main(page: ft.Page) -> None:
     page.title = "Kroma Desktop"
     page.window.width = 1000
     page.window.height = 800
-    page.padding = 20
-    page.scroll = ft.ScrollMode.AUTO
+    page.padding = 0
     page.theme = build_light_theme()
     page.dark_theme = build_dark_theme()
     page.theme_mode = ft.ThemeMode.LIGHT
@@ -100,25 +99,33 @@ def main(page: ft.Page) -> None:
         _show_login()
 
     # ── Page layout ─────────────────────────────────────────
-    header = ft.Row(
-        [
-            ft.Row(
-                [
-                    ft.Icon(ft.Icons.AGRICULTURE, color=LIGHT["primary"]),
-                    ft.Text("Kroma Desktop", size=24, weight=ft.FontWeight.BOLD),
-                ],
-                spacing=8,
-            ),
-            dark_mode_btn,
-        ],
-        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+    header = ft.Container(
+        content=ft.Row(
+            [
+                ft.Row(
+                    [
+                        ft.Icon(ft.Icons.AGRICULTURE, color=ft.Colors.PRIMARY),
+                        ft.Text(
+                            "Kroma Desktop",
+                            size=20,
+                            weight=ft.FontWeight.BOLD,
+                            color=ft.Colors.ON_SURFACE,
+                        ),
+                    ],
+                    spacing=8,
+                ),
+                dark_mode_btn,
+            ],
+            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        ),
+        padding=ft.Padding(left=20, top=10, right=20, bottom=10),
     )
 
     page.add(
         ft.Column(
-            [header, ft.Divider(height=1), content_area],
-            spacing=10,
+            [header, ft.Divider(height=1, color=ft.Colors.OUTLINE_VARIANT), content_area],
+            spacing=0,
             expand=True,
         )
     )

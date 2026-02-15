@@ -6,17 +6,9 @@ import numpy as np
 from src.config import ALL_RIPENESS_CLASSES, RIPENESS_COLORS
 from src.enums import Direction, RipenessClass
 from src.schemas import CropInfo
-from src.ui.theme import LIGHT
 from src.utils.image_utils import frame_to_base64
 
 _PAGE_SIZE = 20
-
-
-def _direction_colors(pal: dict) -> dict[str, tuple[str, str]]:
-    return {
-        Direction.IN: (pal["sidebar_accent"], pal["primary_foreground"]),
-        Direction.OUT: (pal["accent"], pal["accent_foreground"]),
-    }
 
 
 class CropGallery(ft.Column):
@@ -27,10 +19,8 @@ class CropGallery(ft.Column):
         crop_images: list[np.ndarray],
         crop_infos: list[CropInfo],
         on_crops_changed: callable = None,
-        palette: dict | None = None,
     ):
         super().__init__()
-        self._pal = palette or LIGHT
         self._crop_images = list(crop_images)
         self._crop_infos = list(crop_infos)
         self.on_crops_changed = on_crops_changed
@@ -44,23 +34,23 @@ class CropGallery(ft.Column):
         self._direction_chips = ft.Row(spacing=8, wrap=True)
         self._filter_chips = ft.Row(spacing=8, wrap=True)
         self._header_text = ft.Text(
-            size=16, weight=ft.FontWeight.BOLD, color=self._pal["card_foreground"]
+            size=16, weight=ft.FontWeight.BOLD, color=ft.Colors.ON_SURFACE
         )
         self._grid = ft.GridView(
             max_extent=150, child_aspect_ratio=0.65, spacing=10, run_spacing=10, expand=True,
         )
-        self._page_info = ft.Text(size=12, color=self._pal["muted_foreground"])
+        self._page_info = ft.Text(size=12, color=ft.Colors.ON_SURFACE_VARIANT)
         self._btn_prev = ft.IconButton(
             icon=ft.Icons.CHEVRON_LEFT,
             on_click=lambda e: self._change_page(-1),
             disabled=True,
-            icon_color=self._pal["primary"],
+            icon_color=ft.Colors.PRIMARY,
         )
         self._btn_next = ft.IconButton(
             icon=ft.Icons.CHEVRON_RIGHT,
             on_click=lambda e: self._change_page(1),
             disabled=True,
-            icon_color=self._pal["primary"],
+            icon_color=ft.Colors.PRIMARY,
         )
         self._pagination_row = ft.Row(
             [self._btn_prev, self._page_info, self._btn_next],
@@ -71,10 +61,10 @@ class CropGallery(ft.Column):
             content=self._grid,
             expand=True,
             height=420,
-            border=ft.Border.all(1, self._pal["border"]),
+            border=ft.Border.all(1, ft.Colors.OUTLINE_VARIANT),
             border_radius=8,
             padding=10,
-            bgcolor=self._pal["card"],
+            bgcolor=ft.Colors.SURFACE_CONTAINER_LOWEST,
         )
 
         self.controls = [
@@ -88,8 +78,6 @@ class CropGallery(ft.Column):
         self._rebuild()
 
     def _rebuild(self):
-        pal = self._pal
-        dir_colors = _direction_colors(pal)
         total_crops = len(self._crop_images)
 
         # Contar por clase y direccion
@@ -112,17 +100,16 @@ class CropGallery(ft.Column):
         )
         for d, d_label in [(Direction.IN, "IN"), (Direction.OUT, "OUT")]:
             count = dir_counts[d]
-            bg, _ = dir_colors.get(d, (pal["muted"], pal["foreground"]))
             dir_chips.append(
                 ft.Chip(
                     label=ft.Text(f"{d_label} ({count})"),
                     selected=self._direction_filter == d,
-                    selected_color=bg,
                     on_select=lambda e, c=d: self._set_direction_filter(c),
                 )
             )
         self._direction_chips.controls = [
-            ft.Text("Direccion:", size=12, weight=ft.FontWeight.BOLD, color=pal["card_foreground"])
+            ft.Text("Direccion:", size=12, weight=ft.FontWeight.BOLD,
+                    color=ft.Colors.ON_SURFACE)
         ] + dir_chips
 
         # Ripeness filter chips
@@ -146,7 +133,8 @@ class CropGallery(ft.Column):
                 )
             )
         self._filter_chips.controls = [
-            ft.Text("Madurez:", size=12, weight=ft.FontWeight.BOLD, color=pal["card_foreground"])
+            ft.Text("Madurez:", size=12, weight=ft.FontWeight.BOLD,
+                    color=ft.Colors.ON_SURFACE)
         ] + chips
 
         # Filtrar items
@@ -189,13 +177,11 @@ class CropGallery(ft.Column):
         self._grid.controls = items
 
     def _build_card(self, idx: int) -> ft.Container:
-        pal = self._pal
-        dir_colors = _direction_colors(pal)
         info = self._crop_infos[idx]
 
         colors = RIPENESS_COLORS.get(info.ripeness)
-        bg_color = colors.hex if colors else pal["muted"]
-        text_color = colors.text_color if colors else pal["foreground"]
+        bg_color = colors.hex if colors else ft.Colors.SURFACE_CONTAINER
+        text_color = colors.text_color if colors else ft.Colors.ON_SURFACE
 
         ripeness_badge = ft.Container(
             content=ft.Text(
@@ -208,9 +194,17 @@ class CropGallery(ft.Column):
             padding=ft.Padding.symmetric(horizontal=8, vertical=2),
         )
 
-        dir_bg, dir_tc = dir_colors.get(
-            info.direction, (pal["muted"], pal["foreground"])
-        )
+        # Direction badge colors
+        if info.direction == Direction.IN:
+            dir_bg = ft.Colors.PRIMARY
+            dir_tc = ft.Colors.ON_PRIMARY
+        elif info.direction == Direction.OUT:
+            dir_bg = ft.Colors.SECONDARY
+            dir_tc = ft.Colors.ON_SECONDARY
+        else:
+            dir_bg = ft.Colors.SURFACE_CONTAINER
+            dir_tc = ft.Colors.ON_SURFACE
+
         direction_badge = (
             ft.Container(
                 content=ft.Text(
@@ -225,7 +219,7 @@ class CropGallery(ft.Column):
         )
 
         delete_btn = ft.IconButton(
-            icon=ft.Icons.CLOSE, icon_size=14, icon_color=pal["destructive"],
+            icon=ft.Icons.CLOSE, icon_size=14, icon_color=ft.Colors.ERROR,
             tooltip="Eliminar",
             on_click=lambda e, i=idx: self._delete_crop(i),
             style=ft.ButtonStyle(padding=0),
@@ -246,7 +240,8 @@ class CropGallery(ft.Column):
                     ),
                     ft.Row(
                         [
-                            ft.Text(f"#{idx + 1}", size=11, weight=ft.FontWeight.BOLD, color=pal["card_foreground"]),
+                            ft.Text(f"#{idx + 1}", size=11, weight=ft.FontWeight.BOLD,
+                                    color=ft.Colors.ON_SURFACE),
                             direction_badge,
                         ],
                         alignment=ft.MainAxisAlignment.CENTER, spacing=4,
@@ -255,8 +250,8 @@ class CropGallery(ft.Column):
                 ],
                 horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=2, expand=True,
             ),
-            border=ft.Border.all(1, pal["border"]),
-            border_radius=10, padding=6, bgcolor=pal["secondary"], expand=True,
+            border=ft.Border.all(1, ft.Colors.OUTLINE_VARIANT),
+            border_radius=10, padding=6, bgcolor=ft.Colors.SURFACE_CONTAINER_LOW, expand=True,
             shadow=ft.BoxShadow(blur_radius=4, color="#10000000"),
         )
 

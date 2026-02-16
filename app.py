@@ -15,7 +15,7 @@ import flet as ft
 
 from src.db import create_db_and_tables
 from src.services.auth_service import AuthResult, AuthService
-from src.ui.theme import build_dark_theme, build_light_theme, palette, LIGHT
+from src.ui.theme import build_dark_theme, build_light_theme
 from src.ui.views.home_view import HomeView
 from src.ui.views.login_view import LoginView
 
@@ -79,6 +79,7 @@ def main(page: ft.Page) -> None:
             user=user,
             page=page,
             on_logout=_on_logout,
+            dark_mode_btn=dark_mode_btn,
         )
         content_area.controls.append(home_view)
         page.update()
@@ -99,36 +100,7 @@ def main(page: ft.Page) -> None:
         _show_login()
 
     # ── Page layout ─────────────────────────────────────────
-    header = ft.Container(
-        content=ft.Row(
-            [
-                ft.Row(
-                    [
-                        ft.Icon(ft.Icons.AGRICULTURE, color=ft.Colors.PRIMARY),
-                        ft.Text(
-                            "Kroma Desktop",
-                            size=20,
-                            weight=ft.FontWeight.BOLD,
-                            color=ft.Colors.ON_SURFACE,
-                        ),
-                    ],
-                    spacing=8,
-                ),
-                dark_mode_btn,
-            ],
-            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
-        ),
-        padding=ft.Padding(left=20, top=10, right=20, bottom=10),
-    )
-
-    page.add(
-        ft.Column(
-            [header, ft.Divider(height=1, color=ft.Colors.OUTLINE_VARIANT), content_area],
-            spacing=0,
-            expand=True,
-        )
-    )
+    page.add(content_area)
 
     # ── Auto-login attempt ──────────────────────────────────
     auth = AuthService()
@@ -141,4 +113,4 @@ def main(page: ft.Page) -> None:
 
 
 if __name__ == "__main__":
-    ft.run(main)
+    ft.run(main, assets_dir=".")

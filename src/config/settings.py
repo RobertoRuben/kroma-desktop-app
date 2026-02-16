@@ -10,6 +10,7 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__fil
 
 DET_MODEL_PATH = os.path.join(BASE_DIR, "src", "weights", "pepper_det.onnx")
 CLS_MODEL_PATH = os.path.join(BASE_DIR, "src", "weights", "pepper_ripeness_cls_v1.onnx")
+QUALITY_MODEL_PATH = os.path.join(BASE_DIR, "src", "weights", "pepper_qualitiy_level_cls_v1.onnx")
 TRACKER_CONFIG = os.path.join(BASE_DIR, "botsort.yaml")
 
 DEFAULT_CONFIDENCE = 0.40

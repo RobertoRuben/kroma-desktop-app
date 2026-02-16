@@ -8,14 +8,19 @@ from src.config.settings import (
     DET_MODEL_PATH,
     DISPLAY_MAX_H,
     DISPLAY_MAX_W,
+    QUALITY_MODEL_PATH,
     TRACKER_CONFIG,
 )
 from src.config.colors import (
+    ALL_QUALITY_CLASSES,
     ALL_RIPENESS_CLASSES,
+    ClassColors,
     ONNX_CLS_INDEX,
+    ONNX_QUALITY_INDEX,
+    QUALITY_BGR,
+    QUALITY_COLORS,
     RIPENESS_BGR,
     RIPENESS_COLORS,
-    RipenessColors,
 )
 
 __all__ = [
@@ -28,10 +33,15 @@ __all__ = [
     "DET_MODEL_PATH",
     "DISPLAY_MAX_H",
     "DISPLAY_MAX_W",
+    "QUALITY_MODEL_PATH",
     "TRACKER_CONFIG",
+    "ALL_QUALITY_CLASSES",
     "ALL_RIPENESS_CLASSES",
+    "ClassColors",
     "ONNX_CLS_INDEX",
+    "ONNX_QUALITY_INDEX",
+    "QUALITY_BGR",
+    "QUALITY_COLORS",
     "RIPENESS_BGR",
     "RIPENESS_COLORS",
-    "RipenessColors",
 ]

@@ -1,19 +1,20 @@
 """Procesador de video: deteccion + tracking + clasificacion + conteo."""
 
+from __future__ import annotations
+
 import os
 import queue
 import threading
 from pathlib import Path
-from typing import Callable
 
 import cv2
 import numpy as np
 import yaml
 from ultralytics.trackers.bot_sort import BOTSORT
 
-from src.config import CROP_SIZE
-from src.enums import Direction, RipenessClass
-from src.schemas import CropInfo, ProcessingResult, RipnessCounts
+from src.config import CROP_SIZE, ONNX_CLS_INDEX, ONNX_QUALITY_INDEX
+from src.enums import Direction, QualityClass, RipenessClass
+from src.schemas import CropInfo, ProcessingResult, QualityCounts, RipnessCounts
 from src.processing.detections import Detections
 from src.processing.onnx_classifier import OnnxClassifier
 from src.processing.onnx_detector import OnnxDetector
@@ -24,13 +25,14 @@ from src.utils.image_utils import resize_with_padding, tone_map_hdr_frame
 
 
 class VideoProcessor:
-    """Procesa video con ONNX detector + BoT-SORT tracker + clasificacion de madurez."""
+    """Procesa video con ONNX detector + BoT-SORT tracker + clasificacion de madurez y calidad."""
 
     def __init__(
         self,
         video_path: str,
         model_path: str,
         cls_model_path: str,
+        quality_model_path: str,
         tracker_config: str,
         roi_points: list[tuple[int, int]],
         use_gpu: bool,
@@ -44,7 +46,8 @@ class VideoProcessor:
         self.output_dir = output_dir
 
         self.detector = OnnxDetector(model_path, use_gpu, confidence)
-        self.classifier = OnnxClassifier(cls_model_path, use_gpu)
+        self.classifier = OnnxClassifier(cls_model_path, use_gpu, ONNX_CLS_INDEX)
+        self.quality_classifier = OnnxClassifier(quality_model_path, use_gpu, ONNX_QUALITY_INDEX)
 
         with open(tracker_config, "r") as f:
             tracker_args = yaml.safe_load(f)
@@ -57,12 +60,16 @@ class VideoProcessor:
         self._crops: list[np.ndarray] = []
         self._crop_infos: list[CropInfo] = []
         self._track_ripeness: dict[int, tuple[RipenessClass, float]] = {}
+        self._track_quality: dict[int, tuple[QualityClass, float]] = {}
         self._ripeness_counts = RipnessCounts.empty()
         self._in_ripeness = RipnessCounts.empty()
         self._out_ripeness = RipnessCounts.empty()
+        self._quality_counts = QualityCounts.empty()
+        self._in_quality = QualityCounts.empty()
+        self._out_quality = QualityCounts.empty()
 
     def process(
-        self, progress_callback: Callable[[int, int, int, int], None] | None = None
+        self, progress_callback: callable | None = None
     ) -> ProcessingResult:
         """Procesa el video completo con I/O threading para mayor velocidad."""
         cap = cv2.VideoCapture(self.video_path)
@@ -144,14 +151,20 @@ class VideoProcessor:
                             frame_clean, tracked_boxes, track_ids, new_crossings, frame_num,
                         )
 
-                # Track ripeness as str dict for annotator compatibility
+                # Track ripeness + quality as str dicts for annotator compatibility
                 track_rip_str = {
                     tid: (cls.value, conf) for tid, (cls, conf) in self._track_ripeness.items()
                 }
-                self.annotator.annotate_frame(frame, tracked_boxes, track_ids, track_rip_str)
+                track_qual_str = {
+                    tid: (cls.value, conf) for tid, (cls, conf) in self._track_quality.items()
+                }
+                self.annotator.annotate_frame(
+                    frame, tracked_boxes, track_ids, track_rip_str, track_qual_str,
+                )
                 self.annotator.draw_legend(
                     frame, self.region_counter,
                     self._ripeness_counts, self._in_ripeness, self._out_ripeness,
+                    self._quality_counts, self._in_quality, self._out_quality,
                 )
                 self.annotator.draw_roi(frame)
 
@@ -178,6 +191,9 @@ class VideoProcessor:
             ripeness_counts=self._ripeness_counts,
             in_ripeness=self._in_ripeness,
             out_ripeness=self._out_ripeness,
+            quality_counts=self._quality_counts,
+            in_quality=self._in_quality,
+            out_quality=self._out_quality,
             frames_processed=frame_num,
             total_frames=total_frames,
             crops=self._crop_infos,
@@ -204,7 +220,7 @@ class VideoProcessor:
         boxes: np.ndarray,
         track_ids: list[int],
     ) -> None:
-        """Clasifica tracks que aun no tienen ripeness asignado."""
+        """Clasifica tracks que aun no tienen ripeness/quality asignado."""
         h, w = frame.shape[:2]
         for i, tid in enumerate(track_ids):
             if tid in self._track_ripeness:
@@ -215,8 +231,10 @@ class VideoProcessor:
             if x2 <= x1 or y2 <= y1:
                 continue
             crop = frame[y1:y2, x1:x2]
-            ripeness_cls, conf = self.classifier.classify(crop)
-            self._track_ripeness[tid] = (ripeness_cls, conf)
+            ripeness_cls, rip_conf = self.classifier.classify(crop)
+            self._track_ripeness[tid] = (ripeness_cls, rip_conf)
+            quality_cls, qual_conf = self.quality_classifier.classify(crop)
+            self._track_quality[tid] = (quality_cls, qual_conf)
 
     def _extract_crops(
         self,
@@ -241,10 +259,16 @@ class VideoProcessor:
             crop_padded = resize_with_padding(crop, CROP_SIZE, CROP_SIZE)
 
             if tid in self._track_ripeness:
-                ripeness_cls, conf = self._track_ripeness[tid]
+                ripeness_cls, rip_conf = self._track_ripeness[tid]
             else:
-                ripeness_cls, conf = self.classifier.classify(crop)
-                self._track_ripeness[tid] = (ripeness_cls, conf)
+                ripeness_cls, rip_conf = self.classifier.classify(crop)
+                self._track_ripeness[tid] = (ripeness_cls, rip_conf)
+
+            if tid in self._track_quality:
+                quality_cls, qual_conf = self._track_quality[tid]
+            else:
+                quality_cls, qual_conf = self.quality_classifier.classify(crop)
+                self._track_quality[tid] = (quality_cls, qual_conf)
 
             direction = self.region_counter.get_direction(tid)
 
@@ -253,18 +277,23 @@ class VideoProcessor:
                 frame_number=frame_num,
                 bbox=(x1, y1, x2, y2),
                 ripeness=ripeness_cls,
-                ripeness_conf=conf,
+                ripeness_conf=rip_conf,
+                quality=quality_cls,
+                quality_conf=qual_conf,
                 direction=direction,
             )
 
             self._crops.append(crop_padded)
             self._crop_infos.append(crop_info)
             self._ripeness_counts = self._ripeness_counts.increment(ripeness_cls)
+            self._quality_counts = self._quality_counts.increment(quality_cls)
 
             if direction == Direction.IN:
                 self._in_ripeness = self._in_ripeness.increment(ripeness_cls)
+                self._in_quality = self._in_quality.increment(quality_cls)
             elif direction == Direction.OUT:
                 self._out_ripeness = self._out_ripeness.increment(ripeness_cls)
+                self._out_quality = self._out_quality.increment(quality_cls)
 
     def _deduplicate_crops(self) -> None:
         """Elimina crops duplicados del mismo track_id."""

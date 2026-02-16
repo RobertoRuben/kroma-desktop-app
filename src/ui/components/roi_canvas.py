@@ -8,6 +8,10 @@ from src.ui.theme import LIGHT
 ROI_MODE_LINE = "line"
 ROI_MODE_POLYGON = "polygon"
 
+# Canvas paints need actual hex colors (ft.Colors.* tokens don't work in Paint)
+_PRIMARY_HEX = LIGHT["primary"]  # #427B61
+_PRIMARY_ALPHA = "#40427B61"     # 25% opacity primary
+
 
 class ROICanvas(ft.Column):
     """Canvas interactivo para dibujar ROI (linea o poligono) sobre el primer frame."""
@@ -20,10 +24,8 @@ class ROICanvas(ft.Column):
         scale_x: float,
         scale_y: float,
         on_roi_confirmed: callable,
-        palette: dict | None = None,
     ):
         super().__init__()
-        self._pal = palette or LIGHT
         self.image_base64 = image_base64
         self.display_width = display_width
         self.display_height = display_height
@@ -36,16 +38,16 @@ class ROICanvas(ft.Column):
         self.mode = ROI_MODE_LINE
 
         self._stroke_paint = ft.Paint(
-            color=self._pal["primary"],
+            color=_PRIMARY_HEX,
             stroke_width=2,
             style=ft.PaintingStyle.STROKE,
         )
         self._fill_paint = ft.Paint(
-            color="#404B8C6B",
+            color=_PRIMARY_ALPHA,
             style=ft.PaintingStyle.FILL,
         )
         self._line_band_paint = ft.Paint(
-            color="#404B8C6B",
+            color=_PRIMARY_ALPHA,
             stroke_width=30,
             style=ft.PaintingStyle.STROKE,
             stroke_cap=ft.StrokeCap.ROUND,
@@ -79,7 +81,7 @@ class ROICanvas(ft.Column):
         self.btn_confirm = ft.Button(
             "Confirmar ROI y Procesar", icon=ft.Icons.PLAY_ARROW,
             on_click=self._on_confirm, disabled=True,
-            color=self._pal["primary_foreground"], bgcolor=self._pal["primary"],
+            color=ft.Colors.ON_PRIMARY, bgcolor=ft.Colors.PRIMARY,
         )
 
         gesture = ft.GestureDetector(
@@ -96,7 +98,7 @@ class ROICanvas(ft.Column):
                     gesture,
                 ]
             ),
-            border=ft.Border.all(2, self._pal["primary"]),
+            border=ft.Border.all(2, ft.Colors.PRIMARY),
             border_radius=8,
             clip_behavior=ft.ClipBehavior.HARD_EDGE,
             width=self.display_width,
@@ -107,7 +109,7 @@ class ROICanvas(ft.Column):
             ft.Row([self.mode_radio], wrap=True, scroll=ft.ScrollMode.AUTO),
             ft.Text(
                 "Click sobre la imagen para definir la zona de interes.",
-                size=13, italic=True, color=self._pal["muted_foreground"],
+                size=13, italic=True, color=ft.Colors.ON_SURFACE_VARIANT,
             ),
             ft.Row([self._image_container], scroll=ft.ScrollMode.AUTO),
             self.points_text,

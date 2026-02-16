@@ -6,7 +6,7 @@ import shutil
 import flet as ft
 import numpy as np
 
-from src.config import ALL_RIPENESS_CLASSES, RIPENESS_COLORS
+from src.config import ALL_QUALITY_CLASSES, ALL_RIPENESS_CLASSES, QUALITY_COLORS, RIPENESS_COLORS
 from src.schemas import ProcessingResult
 from src.ui.components.crop_gallery import CropGallery
 
@@ -77,6 +77,7 @@ class ResultsView(ft.Column):
                         padding=10,
                     ),
                     _ripeness_breakdown(result),
+                    _quality_breakdown(result),
                     ft.Text(
                         f"Frames procesados: {result.frames_processed}/{result.total_frames}",
                         size=12,
@@ -253,6 +254,86 @@ def _ripeness_breakdown(result: ProcessingResult) -> ft.Container:
                 _num_cell(str(result.in_ripeness.get(cls))),
                 _num_cell(str(result.out_ripeness.get(cls))),
                 _num_cell(str(result.ripeness_counts.get(cls)), bold=True),
+            ],
+            spacing=4,
+            run_spacing=0,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        )
+        rows.append(row)
+
+    return ft.Container(
+        content=ft.Column(rows, spacing=4),
+        padding=10,
+        border=ft.Border.all(1, ft.Colors.OUTLINE_VARIANT),
+        border_radius=8,
+        bgcolor=ft.Colors.SURFACE_CONTAINER_LOWEST,
+    )
+
+
+def _quality_breakdown(result: ProcessingResult) -> ft.Container:
+    """Tabla visual con desglose de calidad por IN/OUT."""
+
+    def _num_cell(value: str, bold: bool = False) -> ft.Container:
+        return ft.Container(
+            ft.Text(
+                value,
+                size=11,
+                weight=ft.FontWeight.BOLD if bold else None,
+                text_align=ft.TextAlign.CENTER,
+                color=ft.Colors.ON_SURFACE,
+            ),
+            alignment=ft.Alignment.CENTER,
+            col={"xs": 2, "sm": 2},
+        )
+
+    header = ft.ResponsiveRow(
+        [
+            ft.Container(
+                ft.Text("Calidad", size=11, weight=ft.FontWeight.BOLD,
+                        color=ft.Colors.ON_SURFACE),
+                col={"xs": 6, "sm": 6},
+            ),
+            ft.Container(
+                ft.Text("IN", size=11, weight=ft.FontWeight.BOLD,
+                        color=ft.Colors.PRIMARY, text_align=ft.TextAlign.CENTER),
+                alignment=ft.Alignment.CENTER,
+                col={"xs": 2, "sm": 2},
+            ),
+            ft.Container(
+                ft.Text("OUT", size=11, weight=ft.FontWeight.BOLD,
+                        color=ft.Colors.ON_SURFACE, text_align=ft.TextAlign.CENTER),
+                alignment=ft.Alignment.CENTER,
+                col={"xs": 2, "sm": 2},
+            ),
+            ft.Container(
+                ft.Text("Total", size=11, weight=ft.FontWeight.BOLD,
+                        text_align=ft.TextAlign.CENTER, color=ft.Colors.ON_SURFACE),
+                alignment=ft.Alignment.CENTER,
+                col={"xs": 2, "sm": 2},
+            ),
+        ],
+        spacing=4,
+        run_spacing=0,
+    )
+
+    rows = [header, ft.Divider(height=1, color=ft.Colors.OUTLINE_VARIANT)]
+    for cls in ALL_QUALITY_CLASSES:
+        color_hex = QUALITY_COLORS[cls].hex
+        row = ft.ResponsiveRow(
+            [
+                ft.Container(
+                    content=ft.Row(
+                        [
+                            ft.Container(width=10, height=10, bgcolor=color_hex, border_radius=5),
+                            ft.Text(cls.value.capitalize(), size=11, color=ft.Colors.ON_SURFACE),
+                        ],
+                        spacing=6,
+                    ),
+                    col={"xs": 6, "sm": 6},
+                ),
+                _num_cell(str(result.in_quality.get(cls))),
+                _num_cell(str(result.out_quality.get(cls))),
+                _num_cell(str(result.quality_counts.get(cls)), bold=True),
             ],
             spacing=4,
             run_spacing=0,

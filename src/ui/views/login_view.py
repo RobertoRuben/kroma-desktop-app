@@ -7,8 +7,7 @@ from typing import Callable
 
 import flet as ft
 
-from src.services.auth_service import AuthService, AuthResult
-from src.ui.theme import LIGHT, palette
+from src.services.auth_service import AuthResult, AuthService
 
 
 class LoginView(ft.Column):
@@ -64,8 +63,8 @@ class LoginView(ft.Column):
             height=45,
             on_click=self._handle_login,
             style=ft.ButtonStyle(
-                bgcolor=LIGHT["primary"],
-                color=LIGHT["primary_foreground"],
+                bgcolor=ft.Colors.PRIMARY,
+                color=ft.Colors.ON_PRIMARY,
                 shape=ft.RoundedRectangleBorder(radius=10),
             ),
         )
@@ -84,7 +83,12 @@ class LoginView(ft.Column):
             ft.Container(
                 content=ft.Column(
                     [
-                        ft.Icon(ft.Icons.AGRICULTURE, size=56, color=LIGHT["primary"]),
+                        ft.Image(
+                            src="/public/logo-fruit-flow.png",
+                            width=80,
+                            height=80,
+                            fit=ft.BoxFit.CONTAIN,
+                        ),
                         ft.Text(
                             "Kroma Desktop",
                             size=28,
@@ -95,7 +99,7 @@ class LoginView(ft.Column):
                             "Inicie sesion para continuar",
                             size=14,
                             text_align=ft.TextAlign.CENTER,
-                            color=LIGHT["muted_foreground"],
+                            color=ft.Colors.ON_SURFACE_VARIANT,
                         ),
                         ft.Divider(height=20, color=ft.Colors.TRANSPARENT),
                         self._username,
@@ -133,9 +137,7 @@ class LoginView(ft.Column):
         """If a cached user exists, offer instant offline login."""
         result = self._auth.login_offline()
         if result.success and result.user:
-            self._offline_text.value = (
-                f"Sesion guardada de: {result.user.username} — presione Enter o el boton para continuar."
-            )
+            self._offline_text.value = f"Sesion guardada de: {result.user.username} — presione Enter o el boton para continuar."
             self._offline_text.visible = True
             self._username.value = result.user.username
             self._username.disabled = True
@@ -164,7 +166,9 @@ class LoginView(ft.Column):
                     if offline.success:
                         self._page.run_thread(lambda: self._finish_login(offline))
                         return
-                self._page.run_thread(lambda: self._show_error(result.error or "Error desconocido"))
+                self._page.run_thread(
+                    lambda: self._show_error(result.error or "Error desconocido")
+                )
             else:
                 # No password — try offline only
                 offline = self._auth.login_offline()

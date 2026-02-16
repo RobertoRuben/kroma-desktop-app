@@ -6,62 +6,58 @@ import flet as ft
 # Paleta de colores — tokens semánticos
 # ──────────────────────────────────────────────
 
-# Modo claro
+# Modo claro — HSL spec convertido a hex
 LIGHT = {
-    "background": "#F6FAF7",
-    "foreground": "#23332B",
-    "card": "#FFFFFF",
-    "card_foreground": "#23332B",
-    "primary": "#4B8C6B",
-    "primary_foreground": "#FFFFFF",
-    "primary_hover": "#3E9C6B",
-    "primary_light": "#F2FCF9",
-    "secondary": "#F0F6F3",
-    "secondary_foreground": "#23332B",
-    "muted": "#E3ECE7",
-    "muted_foreground": "#7CA18C",
-    "accent": "#C18A3A",
-    "accent_foreground": "#FFFFFF",
-    "destructive": "#E04A4A",
-    "destructive_foreground": "#FFFFFF",
-    "border": "#E3ECE7",
-    "input": "#E3ECE7",
-    "ring": "#4B8C6B",
-    "sidebar_bg": "#4B8C6B",
-    "sidebar_fg": "#FFFFFF",
-    "sidebar_accent": "#3E9C6B",
-    "sidebar_border": "#3A5C4A",
-    "step_completed": "#4B8C6B",
-    "step_pending": "#E3ECE7",
+    "background": "#F7F8F7",  # HSL(120, 2%, 97%)
+    "foreground": "#222A27",  # HSL(153, 10%, 15%)
+    "card": "#FFFFFF",  # HSL(0, 0%, 100%)
+    "card_foreground": "#222A27",  # HSL(153, 10%, 15%)
+    "primary": "#427B61",  # HSL(153, 30%, 37%)
+    "primary_foreground": "#FFFFFF",  # HSL(0, 0%, 100%)
+    "primary_hover": "#4B9B77",  # HSL(153, 35%, 45%)
+    "primary_light": "#DFECE6",  # HSL(153, 25%, 90%)
+    "secondary": "#DDDFDD",  # HSL(120, 2%, 87%)
+    "secondary_foreground": "#222A27",  # HSL(153, 10%, 15%)
+    "muted": "#D6DCDB",  # HSL(169, 8%, 85%)
+    "muted_foreground": "#6A7C79",  # HSL(169, 8%, 45%)
+    "accent": "#FFFFFF",  # Blanco (reemplaza amarillo)
+    "accent_foreground": "#427B61",  # Primary green para contraste
+    "destructive": "#B63A3C",  # HSL(359, 52%, 47%)
+    "destructive_foreground": "#FFFFFF",  # HSL(0, 0%, 100%)
+    "border": "#D6DCDB",  # HSL(169, 8%, 85%)
+    "input": "#D6DCDB",  # HSL(169, 8%, 85%)
+    "ring": "#427B61",  # HSL(153, 30%, 37%)
+    "sidebar_bg": "#427B61",  # HSL(153, 30%, 37%)
+    "sidebar_fg": "#FFFFFF",  # HSL(0, 0%, 100%)
+    "sidebar_accent": "#4B9B77",  # HSL(153, 35%, 45%)
+    "sidebar_border": "#36634F",  # HSL(153, 30%, 30%)
 }
 
-# Modo oscuro
+# Modo oscuro — colores invertidos, misma paleta tematica
 DARK = {
-    "background": "#0E1A17",
-    "foreground": "#F6FAF7",
-    "card": "#1A2B23",
-    "card_foreground": "#F6FAF7",
-    "primary": "#4B8C6B",
+    "background": "#101412",  # HSL(153, 10%, 7%)
+    "foreground": "#F2F3F2",  # HSL(120, 2%, 95%)
+    "card": "#171C1A",  # HSL(153, 10%, 10%)
+    "card_foreground": "#F2F3F2",  # HSL(120, 2%, 95%)
+    "primary": "#427B61",  # HSL(153, 30%, 37%) — mismo
     "primary_foreground": "#FFFFFF",
-    "primary_hover": "#3E9C6B",
-    "primary_light": "#1A2B23",
-    "secondary": "#23332B",
-    "secondary_foreground": "#F6FAF7",
-    "muted": "#232E29",
-    "muted_foreground": "#A3C2B2",
-    "accent": "#C18A3A",
-    "accent_foreground": "#FFFFFF",
-    "destructive": "#E04A4A",
+    "primary_hover": "#4B9B77",  # HSL(153, 35%, 45%) — mismo
+    "primary_light": "#305041",  # HSL(153, 25%, 25%)
+    "secondary": "#222A27",  # HSL(153, 10%, 15%)
+    "secondary_foreground": "#F2F3F2",
+    "muted": "#2F3736",  # HSL(169, 8%, 20%)
+    "muted_foreground": "#91A19E",  # HSL(169, 8%, 60%)
+    "accent": "#FFFFFF",  # Blanco (reemplaza amarillo)
+    "accent_foreground": "#427B61",  # Primary green para contraste
+    "destructive": "#B63A3C",  # HSL(359, 52%, 47%) — mismo
     "destructive_foreground": "#FFFFFF",
-    "border": "#232E29",
-    "input": "#232E29",
-    "ring": "#4B8C6B",
-    "sidebar_bg": "#4B8C6B",
+    "border": "#2F3736",  # HSL(169, 8%, 20%)
+    "input": "#2F3736",  # HSL(169, 8%, 20%)
+    "ring": "#427B61",  # HSL(153, 30%, 37%) — mismo
+    "sidebar_bg": "#427B61",  # HSL(153, 30%, 37%) — mismo
     "sidebar_fg": "#FFFFFF",
-    "sidebar_accent": "#3E9C6B",
-    "sidebar_border": "#2A3A2A",
-    "step_completed": "#4B8C6B",
-    "step_pending": "#232E29",
+    "sidebar_accent": "#4B9B77",  # HSL(153, 35%, 45%) — mismo
+    "sidebar_border": "#36634F",  # HSL(153, 30%, 30%)
 }
 
 

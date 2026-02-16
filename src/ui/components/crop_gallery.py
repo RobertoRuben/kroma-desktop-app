@@ -1,10 +1,10 @@
-"""Galeria de crops con filtrado por madurez/direccion y paginacion."""
+"""Galeria de crops con filtrado por madurez/calidad/direccion y paginacion."""
 
 import flet as ft
 import numpy as np
 
-from src.config import ALL_RIPENESS_CLASSES, RIPENESS_COLORS
-from src.enums import Direction, RipenessClass
+from src.config import ALL_QUALITY_CLASSES, ALL_RIPENESS_CLASSES, QUALITY_COLORS, RIPENESS_COLORS
+from src.enums import Direction, QualityClass, RipenessClass
 from src.schemas import CropInfo
 from src.utils.image_utils import frame_to_base64
 
@@ -12,7 +12,7 @@ _PAGE_SIZE = 20
 
 
 class CropGallery(ft.Column):
-    """Galeria GridView de crops con filtro por madurez, direccion, eliminacion y paginacion."""
+    """Galeria GridView de crops con filtro por madurez, calidad, direccion, eliminacion y paginacion."""
 
     def __init__(
         self,
@@ -25,6 +25,7 @@ class CropGallery(ft.Column):
         self._crop_infos = list(crop_infos)
         self.on_crops_changed = on_crops_changed
         self._active_filter: RipenessClass | None = None
+        self._quality_filter: QualityClass | None = None
         self._direction_filter: Direction | None = None
         self._current_page: int = 0
 
@@ -33,11 +34,12 @@ class CropGallery(ft.Column):
 
         self._direction_chips = ft.Row(spacing=8, wrap=True)
         self._filter_chips = ft.Row(spacing=8, wrap=True)
+        self._quality_chips = ft.Row(spacing=8, wrap=True)
         self._header_text = ft.Text(
             size=16, weight=ft.FontWeight.BOLD, color=ft.Colors.ON_SURFACE
         )
         self._grid = ft.GridView(
-            max_extent=150, child_aspect_ratio=0.65, spacing=10, run_spacing=10, expand=True,
+            max_extent=150, child_aspect_ratio=0.55, spacing=10, run_spacing=10, expand=True,
         )
         self._page_info = ft.Text(size=12, color=ft.Colors.ON_SURFACE_VARIANT)
         self._btn_prev = ft.IconButton(
@@ -71,6 +73,7 @@ class CropGallery(ft.Column):
             self._header_text,
             ft.Row([self._direction_chips], scroll=ft.ScrollMode.AUTO),
             ft.Row([self._filter_chips], scroll=ft.ScrollMode.AUTO),
+            ft.Row([self._quality_chips], scroll=ft.ScrollMode.AUTO),
             self._grid_container,
             self._pagination_row,
         ]
@@ -80,12 +83,15 @@ class CropGallery(ft.Column):
     def _rebuild(self):
         total_crops = len(self._crop_images)
 
-        # Contar por clase y direccion
+        # Contar por clase, calidad y direccion
         class_counts: dict[RipenessClass, int] = {c: 0 for c in ALL_RIPENESS_CLASSES}
+        quality_counts: dict[QualityClass, int] = {c: 0 for c in ALL_QUALITY_CLASSES}
         dir_counts: dict[Direction, int] = {Direction.IN: 0, Direction.OUT: 0}
         for info in self._crop_infos:
             if info.ripeness in class_counts:
                 class_counts[info.ripeness] += 1
+            if info.quality in quality_counts:
+                quality_counts[info.quality] += 1
             if info.direction in dir_counts:
                 dir_counts[info.direction] += 1
 
@@ -137,12 +143,39 @@ class CropGallery(ft.Column):
                     color=ft.Colors.ON_SURFACE)
         ] + chips
 
+        # Quality filter chips
+        q_chips = []
+        q_chips.append(
+            ft.Chip(
+                label=ft.Text(f"Todos ({total_crops})"),
+                selected=self._quality_filter is None,
+                on_select=lambda e: self._set_quality_filter(None),
+            )
+        )
+        for cls in ALL_QUALITY_CLASSES:
+            count = quality_counts[cls]
+            bg = QUALITY_COLORS[cls].hex
+            q_chips.append(
+                ft.Chip(
+                    label=ft.Text(f"{cls.value.capitalize()} ({count})"),
+                    selected=self._quality_filter == cls,
+                    selected_color=bg,
+                    on_select=lambda e, c=cls: self._set_quality_filter(c),
+                )
+            )
+        self._quality_chips.controls = [
+            ft.Text("Calidad:", size=12, weight=ft.FontWeight.BOLD,
+                    color=ft.Colors.ON_SURFACE)
+        ] + q_chips
+
         # Filtrar items
         self._visible_indices = []
         for i, info in enumerate(self._crop_infos):
             if self._direction_filter is not None and info.direction != self._direction_filter:
                 continue
             if self._active_filter is not None and info.ripeness != self._active_filter:
+                continue
+            if self._quality_filter is not None and info.quality != self._quality_filter:
                 continue
             self._visible_indices.append(i)
 
@@ -152,6 +185,8 @@ class CropGallery(ft.Column):
             filter_parts.append(self._direction_filter.value.upper())
         if self._active_filter:
             filter_parts.append(self._active_filter.value.capitalize())
+        if self._quality_filter:
+            filter_parts.append(self._quality_filter.value.capitalize())
         if filter_parts:
             self._header_text.value = (
                 f"Crops Extraidos — {' / '.join(filter_parts)} "
@@ -190,6 +225,22 @@ class CropGallery(ft.Column):
                 text_align=ft.TextAlign.CENTER,
             ),
             bgcolor=bg_color,
+            border_radius=10,
+            padding=ft.Padding.symmetric(horizontal=8, vertical=2),
+        )
+
+        # Quality badge
+        q_colors = QUALITY_COLORS.get(info.quality)
+        q_bg = q_colors.hex if q_colors else ft.Colors.SURFACE_CONTAINER
+        q_tc = q_colors.text_color if q_colors else ft.Colors.ON_SURFACE
+
+        quality_badge = ft.Container(
+            content=ft.Text(
+                f"{info.quality.value.capitalize()} {info.quality_conf:.0%}",
+                size=10, weight=ft.FontWeight.BOLD, color=q_tc,
+                text_align=ft.TextAlign.CENTER,
+            ),
+            bgcolor=q_bg,
             border_radius=10,
             padding=ft.Padding.symmetric(horizontal=8, vertical=2),
         )
@@ -247,6 +298,7 @@ class CropGallery(ft.Column):
                         alignment=ft.MainAxisAlignment.CENTER, spacing=4,
                     ),
                     ripeness_badge,
+                    quality_badge,
                 ],
                 horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=2, expand=True,
             ),
@@ -257,6 +309,12 @@ class CropGallery(ft.Column):
 
     def _set_filter(self, cls: RipenessClass | None):
         self._active_filter = cls
+        self._current_page = 0
+        self._rebuild()
+        self.update()
+
+    def _set_quality_filter(self, cls: QualityClass | None):
+        self._quality_filter = cls
         self._current_page = 0
         self._rebuild()
         self.update()

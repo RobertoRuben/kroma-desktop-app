@@ -20,6 +20,7 @@ import httpx
 from sqlmodel import select
 
 from src.db import get_session
+from src.model.analysis import AnalysisRecord
 from src.model.catalogs import (
     AgriculturalCampaign,
     AgriculturalUnit,
@@ -27,7 +28,7 @@ from src.model.catalogs import (
     Module,
     Shift,
 )
-from src.model.analysis import AnalysisRecord
+from src.model.production import ProductionUnit
 from src.services.api_client import ApiClient
 
 logger = logging.getLogger(__name__)
@@ -47,6 +48,7 @@ class CatalogSyncResult:
     modules: int = 0
     shifts: int = 0
     batches: int = 0
+    production_units: int = 0
     errors: list[str] = field(default_factory=list)
 
 
@@ -122,8 +124,16 @@ class SyncService:
             result.errors.append(f"batches: {exc}")
             logger.warning("Failed to sync batches: %s", exc)
 
+        # Production Units (join table for cascading dropdowns)
+        try:
+            data = self._api.get("/production-units")
+            result.production_units = self._upsert_production_units(data)
+        except Exception as exc:
+            result.errors.append(f"production_units: {exc}")
+            logger.warning("Failed to sync production_units: %s", exc)
+
         if result.errors:
-            result.success = len(result.errors) < 5  # partial success
+            result.success = len(result.errors) < 6  # partial success
             result.detail = f"{len(result.errors)} catalogo(s) con error."
         else:
             total = (
@@ -132,6 +142,7 @@ class SyncService:
                 + result.modules
                 + result.shifts
                 + result.batches
+                + result.production_units
             )
             result.detail = f"{total} registros sincronizados correctamente."
 
@@ -306,6 +317,34 @@ class SyncService:
             session.commit()
         return count
 
+    @staticmethod
+    def _upsert_production_units(data: list[dict]) -> int:
+        count = 0
+        with get_session() as session:
+            for item in data:
+                existing = session.get(ProductionUnit, item["id"])
+                if existing:
+                    existing.agricultural_campaign_id = item["agricultural_campaign_id"]
+                    existing.agricultural_unit_id = item["agricultural_unit_id"]
+                    existing.module_id = item["module_id"]
+                    existing.shift_id = item["shift_id"]
+                    existing.batch_id = item["batch_id"]
+                    session.add(existing)
+                else:
+                    session.add(
+                        ProductionUnit(
+                            id=item["id"],
+                            agricultural_campaign_id=item["agricultural_campaign_id"],
+                            agricultural_unit_id=item["agricultural_unit_id"],
+                            module_id=item["module_id"],
+                            shift_id=item["shift_id"],
+                            batch_id=item["batch_id"],
+                        )
+                    )
+                count += 1
+            session.commit()
+        return count
+
     # ────────────────────────────────────────────────────────
     # Helpers for local counts (UI display)
     # ────────────────────────────────────────────────────────
@@ -316,7 +355,9 @@ class SyncService:
         with get_session() as session:
             return {
                 "agricultural_units": len(session.exec(select(AgriculturalUnit)).all()),
-                "agricultural_campaigns": len(session.exec(select(AgriculturalCampaign)).all()),
+                "agricultural_campaigns": len(
+                    session.exec(select(AgriculturalCampaign)).all()
+                ),
                 "modules": len(session.exec(select(Module)).all()),
                 "shifts": len(session.exec(select(Shift)).all()),
                 "batches": len(session.exec(select(Batch)).all()),

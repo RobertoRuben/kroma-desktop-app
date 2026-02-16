@@ -3,9 +3,9 @@
 import cv2
 import numpy as np
 
-from src.config import RIPENESS_BGR
-from src.enums import RipenessClass
-from src.schemas import RipnessCounts
+from src.config import QUALITY_BGR, RIPENESS_BGR
+from src.enums import QualityClass, RipenessClass
+from src.schemas import QualityCounts, RipnessCounts
 from src.processing.region_counter import RegionCounter
 
 
@@ -67,8 +67,9 @@ class VideoAnnotator:
         boxes: np.ndarray,
         track_ids: list[int],
         track_ripeness: dict[int, tuple[str, float]],
+        track_quality: dict[int, tuple[str, float]] | None = None,
     ) -> None:
-        """Dibuja bboxes, track IDs y madurez sobre el frame (in-place)."""
+        """Dibuja bboxes, track IDs, madurez y calidad sobre el frame (in-place)."""
         h, w = frame.shape[:2]
 
         for i, tid in enumerate(track_ids):
@@ -86,7 +87,12 @@ class VideoAnnotator:
 
             cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
 
-            text = f"#{tid} {label} {conf:.0%}" if label != "?" else f"#{tid}"
+            # Build label: "#id ripeness quality" (e.g. "#1 red good")
+            text = f"#{tid} {label}" if label != "?" else f"#{tid}"
+            if track_quality and tid in track_quality:
+                q_label, _ = track_quality[tid]
+                text += f" {q_label}"
+
             font = cv2.FONT_HERSHEY_SIMPLEX
             fs, th_line = 0.45, 1
             (tw, th), baseline = cv2.getTextSize(text, font, fs, th_line)
@@ -105,13 +111,19 @@ class VideoAnnotator:
         ripeness_counts: RipnessCounts,
         in_ripeness: RipnessCounts,
         out_ripeness: RipnessCounts,
+        quality_counts: QualityCounts | None = None,
+        in_quality: QualityCounts | None = None,
+        out_quality: QualityCounts | None = None,
     ) -> None:
-        """Dibuja leyenda con IN/OUT desglosado por madurez. Usa cache."""
+        """Dibuja leyenda con IN/OUT desglosado por madurez y calidad. Usa cache."""
         counts_hash = (
             region_counter.in_count,
             region_counter.out_count,
             tuple(in_ripeness.model_dump().values()),
             tuple(out_ripeness.model_dump().values()),
+            tuple(quality_counts.model_dump().values()) if quality_counts else (),
+            tuple(in_quality.model_dump().values()) if in_quality else (),
+            tuple(out_quality.model_dump().values()) if out_quality else (),
         )
         if counts_hash == self._legend_counts_hash and self._legend_cache is not None:
             legend_img, y0, x0, bh, bw = self._legend_cache
@@ -123,56 +135,45 @@ class VideoAnnotator:
             return
 
         font = cv2.FONT_HERSHEY_SIMPLEX
-        fs, thickness = 0.45, 1
-        line_h = 22
-        pad = 10
+        fs, thickness = 0.7, 2
+        line_h = 32
+        pad = 16
 
         lines: list[tuple[str, tuple[int, int, int], int, bool, tuple[int, int, int] | None]] = []
 
-        lines.append(
-            (f"IN: {region_counter.in_count}", (230, 180, 0), 0, False, None)
-        )
-        for cls in RipenessClass:
-            count = in_ripeness.get(cls)
-            if count > 0:
-                color_bgr = RIPENESS_BGR[cls.value]
-                lines.append(
-                    (f"{cls.value.capitalize()}: {count}", (220, 220, 220), 12, True, color_bgr)
-                )
-
-        lines.append(("", (0, 0, 0), 0, False, None))
-
-        lines.append(
-            (f"OUT: {region_counter.out_count}", (0, 140, 255), 0, False, None)
-        )
-        for cls in RipenessClass:
-            count = out_ripeness.get(cls)
-            if count > 0:
-                color_bgr = RIPENESS_BGR[cls.value]
-                lines.append(
-                    (f"{cls.value.capitalize()}: {count}", (220, 220, 220), 12, True, color_bgr)
-                )
-
-        lines.append(("", (0, 0, 0), 0, False, None))
-
         total = ripeness_counts.total()
-        lines.append((f"Total: {total}", (255, 255, 255), 0, False, None))
+        lines.append((f"IN: {region_counter.in_count}  OUT: {region_counter.out_count}  Total: {total}", (255, 255, 255), 0, False, None))
+
+        lines.append(("", (0, 0, 0), 0, False, None))
+
+        lines.append(("Madurez:", (230, 200, 100), 0, False, None))
         for cls in RipenessClass:
             count = ripeness_counts.get(cls)
             if count > 0:
                 color_bgr = RIPENESS_BGR[cls.value]
                 lines.append(
-                    (f"{cls.value.capitalize()}: {count}", (220, 220, 220), 12, True, color_bgr)
+                    (f"{cls.value.capitalize()}: {count}", (220, 220, 220), 18, True, color_bgr)
                 )
+
+        if quality_counts and quality_counts.total() > 0:
+            lines.append(("", (0, 0, 0), 0, False, None))
+            lines.append(("Calidad:", (200, 200, 255), 0, False, None))
+            for cls in QualityClass:
+                count = quality_counts.get(cls)
+                if count > 0:
+                    color_bgr = QUALITY_BGR[cls.value]
+                    lines.append(
+                        (f"{cls.value.capitalize()}: {count}", (220, 220, 220), 18, True, color_bgr)
+                    )
 
         max_tw = 0
         for text, _, indent, has_dot, _ in lines:
             if not text:
                 continue
             (tw, _), _ = cv2.getTextSize(text, font, fs, thickness)
-            max_tw = max(max_tw, tw + indent + (14 if has_dot else 0))
+            max_tw = max(max_tw, tw + indent + (20 if has_dot else 0))
 
-        separator_h = 8
+        separator_h = 12
         num_separators = sum(1 for t, _, _, _, _ in lines if not t)
         num_content = len(lines) - num_separators
         box_w = max_tw + pad * 2 + 8
@@ -199,8 +200,8 @@ class VideoAnnotator:
             ty = y_cursor + line_h - 6
             tx = pad + indent
             if has_dot and dot_color:
-                cv2.circle(legend_img, (tx + 5, ty - 4), 5, dot_color, -1, cv2.LINE_AA)
-                tx += 14
+                cv2.circle(legend_img, (tx + 7, ty - 5), 7, dot_color, -1, cv2.LINE_AA)
+                tx += 20
             cv2.putText(legend_img, text, (tx, ty), font, fs, color, thickness, cv2.LINE_AA)
             y_cursor += line_h
 

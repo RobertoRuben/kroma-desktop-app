@@ -1,6 +1,6 @@
 import os
 
-from sqlmodel import SQLModel, create_engine, Session, text
+from sqlmodel import SQLModel, create_engine, Session
 from sqlalchemy import event
 from sqlalchemy.engine import Engine
 

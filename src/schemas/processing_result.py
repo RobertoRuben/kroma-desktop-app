@@ -2,6 +2,7 @@ from pydantic import BaseModel, ConfigDict, Field
 import numpy as np
 
 from src.schemas.crop_info import CropInfo
+from src.schemas.quality_counts import QualityCounts
 from src.schemas.ripeness_counts import RipnessCounts
 
 
@@ -16,6 +17,9 @@ class ProcessingResult(BaseModel):
     ripeness_counts: RipnessCounts = Field(default_factory=RipnessCounts.empty)
     in_ripeness: RipnessCounts = Field(default_factory=RipnessCounts.empty)
     out_ripeness: RipnessCounts = Field(default_factory=RipnessCounts.empty)
+    quality_counts: QualityCounts = Field(default_factory=QualityCounts.empty)
+    in_quality: QualityCounts = Field(default_factory=QualityCounts.empty)
+    out_quality: QualityCounts = Field(default_factory=QualityCounts.empty)
     frames_processed: int = 0
     total_frames: int = 0
     crops: list[CropInfo] = Field(default_factory=list)

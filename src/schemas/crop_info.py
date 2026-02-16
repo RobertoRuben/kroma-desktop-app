@@ -1,7 +1,7 @@
 from pydantic import BaseModel, ConfigDict, Field
 import numpy as np
 
-from src.enums import Direction, RipenessClass, SyncStatus
+from src.enums import Direction, QualityClass, RipenessClass, SyncStatus
 
 
 class CropInfo(BaseModel):
@@ -14,6 +14,8 @@ class CropInfo(BaseModel):
     bbox: tuple[int, int, int, int]  # (x1, y1, x2, y2)
     ripeness: RipenessClass
     ripeness_conf: float = Field(ge=0.0, le=1.0)
+    quality: QualityClass = QualityClass.GOOD
+    quality_conf: float = Field(default=0.0, ge=0.0, le=1.0)
     direction: Direction = Direction.UNKNOWN
     sync_status: SyncStatus = SyncStatus.PENDING
 
